@@ -23,7 +23,7 @@ Using
 
 4. Clone this repository.
 
-   `git clone git@github.com:encedo/hem-api-tester.git`
+   `git clone https://github.com/encedo/hem-api-tester.git`
    
    `cd hem-api-tester`
 
