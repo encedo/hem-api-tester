@@ -86,7 +86,7 @@ if (PHP_OS == "WINNT") {
   } while (true);
 
   echo "Upgrading...\n";
-  $cmd = "sudo sh -c \"./libs/blbx -b $tmp -p /dev/ttyACM0\"";
+  $cmd = "sudo chmod +x ./libs/blbx && sudo ./libs/blbx -b $tmp -p /dev/ttyACM0";
   $stat = system( $cmd );
   echo "Waiting to boot up...\n";
   sleep(15);
