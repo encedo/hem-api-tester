@@ -27,8 +27,13 @@ Using
    
    `cd hem-api-tester`
 
-5. Run first test.
+5. Run first test - e.g. to test Encedo PPA.
 
    `php test_1.php`
 
 Cheers :)
+
+
+
+P.S. Edit config.php with `$cfg_authkey` and `$cfg_epa_domain`.
+
