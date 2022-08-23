@@ -160,21 +160,20 @@ $test_cfg['fws'] = $ret_val['fws'];                         // 'fws' a'ka firmwa
 $test_cfg['conf'] = "ENCEDO PPA";
 if ( strstr($ret_val['hwv'], "EPA") ) $test_cfg['conf'] = "ENCEDO EPA";
 if ( strstr($test_cfg['conf'], "EPA") ) goto print_and_exit;    // test not for EPA
-echo "    Current firmware signature:  " . $test_cfg['fws'] . "\n";
+//echo "    Current firmware signature:  " . $test_cfg['fws'] . "\n";
 // c) set RTC clock - code from T-1.3
 $ret = helper_checkin($cfg_domain);
 if ($ret == false) goto print_and_exit;                     // exit on error
 // d) perform local USER authentication
 $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:upgrade");   // anby scope is vali, more here https://docs.encedo.com/hem-api/reference/api-reference/system/upgrade/firmware#required-access-scope
 if ($token == false) goto print_and_exit;                    // exit on error
-echo "    Token: $token\n";
+//echo "    Token: $token\n";
 // e) upload new file
 $file_contents = file_get_contents( $filename_hex_path_diagversion ); 
 if ($file_contents == false) goto print_and_exit;                    // exit on error
 $post_data = $file_contents;
 $ret_val = false;
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/upgrade/upload_fw", $ret_val, $post_data, $token, "firmware.bin");
-var_dump($ret_stat);
 if ($ret_stat == false) goto print_and_exit;                     // exit on error
 //  f) check uploaded file integrity
 $counter = 0;
@@ -189,7 +188,6 @@ do {
   if ($counter > 12) break;     // timeoout after 120sec
   sleep(10);
 } while (true);
-var_dump($ret_stat);
 if ( $ret_stat != 200 ) goto print_and_exit;    // unexpected error
 //  g) install new firmware - reboot, recheck in bootloader ann install if check is ok, then boot
 $post_dummy = false;
@@ -215,7 +213,7 @@ $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/version", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                  // exit on API call FAIL
-echo "    Upgraded firmware signature: " . $ret_val['fws'] . "\n";
+//echo "    Upgraded firmware signature: " . $ret_val['fws'] . "\n";
 // j) set result
 $test_cfg['subtests'][2] = 'OK';                           // mark this subtest as OK
 goto summary;
