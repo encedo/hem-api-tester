@@ -96,7 +96,11 @@ function http_transaction($protocol, $method, $domain, $path, &$ret_data = false
   }
   
   if ($upload_file != false) {
-    $opts['http']['header'] = "Authorization: Bearer $token\r\n" . "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"$upload_file\"\r\n";
+    if ($token != false) {
+      $opts['http']['header'] = "Authorization: Bearer $token\r\n" . "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"$upload_file\"\r\n";
+    } else {
+      $opts['http']['header'] = "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"$upload_file\"\r\n";
+    }
     $opts['http']['timeout'] = 20;
   }
 
