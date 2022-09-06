@@ -233,8 +233,6 @@ do {
   $ret_val = false;
   $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/diag/test_trng", $ret_val);  
   //if ( $cfg_debug ) var_dump( $ret_val );
-var_dump($ret_stat); 
-var_dump(strlen($probe_buf));
   if ( $ret_stat != 200 ) goto print_and_exit;                
   if (isset($ret_val['rnd'])) {
     $rnd = base64_decode($ret_val['rnd']);
@@ -242,6 +240,7 @@ var_dump(strlen($probe_buf));
   }
   if (strlen($probe_buf) >= $probe_size) break;
 } while(true);
+mkdir("./out");
 file_put_contents($filename_probe, $probe_buf);
 //echo date(DATE_RFC2822);
 // j) set result
