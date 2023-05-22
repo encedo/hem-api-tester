@@ -632,9 +632,9 @@ foreach($keychain as $item) {
   if ($msg != $msg_test) goto print_and_exit;    //expected is 200 on success
   //echo "CIPHER - PUBKEY\n";
   $msg = base64_encode( openssl_random_pseudo_bytes( 100 ) ); //CBC can handle any message size - padding 
-  $salt = base64_encode( openssl_random_pseudo_bytes( 8 ) ); 
+  $ctx = base64_encode( openssl_random_pseudo_bytes( 8 ) ); 
   $alg = "AES128-CBC";
-  $post_array = array('kid' => $kid, 'pubkey' => $pubkey, 'msg' => $msg, 'alg' => $alg, 'salt' => $salt);
+  $post_array = array('kid' => $kid, 'pubkey' => $pubkey, 'msg' => $msg, 'alg' => $alg, 'ctx' => $ctx);
   $post_data = json_encode( $post_array );    
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/encrypt", $ret_val, $post_data, $token);
@@ -674,8 +674,8 @@ foreach($keychain as $item) {
   if ($msg != $msg_test) goto print_and_exit;    //expected is equal
   //echo "WRAP - PUBKEY\n";
   $msg = base64_encode( openssl_random_pseudo_bytes( 32 ) ); // example random message to wrap (KEK by NIST)
-  $salt = base64_encode( openssl_random_pseudo_bytes( 8 ) ); 
-  $post_array = array('kid' => $kid, 'pubkey' => $pubkey, 'alg' => "AES128", 'msg' => $msg, 'salt' => $salt);
+  $ctx = base64_encode( openssl_random_pseudo_bytes( 8 ) ); 
+  $post_array = array('kid' => $kid, 'pubkey' => $pubkey, 'alg' => "AES128", 'msg' => $msg, 'ctx' => $ctx);
   $post_data = json_encode( $post_array );    
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/wrap", $ret_val, $post_data, $token);

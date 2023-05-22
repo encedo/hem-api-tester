@@ -84,6 +84,7 @@ $hash = 'not_implemented_yet';
 $qr_data = array( 'link' => $qr_link, 'hash' => $hash, 'user' => $encedo_config['user'], 'email' => $encedo_config['email'], 'hostname' => $encedo_config['hostname']);
 $qr_body = json_encode( $qr_data );
 $google_gen_qr_link = "https://chart.googleapis.com/chart?chs=500x500&cht=qr&choe=UTF-8&chl=" . urlencode( $qr_body );
+if ( $cfg_debug ) var_dump( $google_gen_qr_link );     
 //echo "QR code link\n$google_gen_qr_link\n";
 $png = @file_get_contents($google_gen_qr_link);
 $temp_file = tempnam(sys_get_temp_dir(), 'encedo');
@@ -91,7 +92,7 @@ file_put_contents($temp_file, $png);
 if (PHP_OS == "WINNT") {
   shell_exec("start $temp_file");
 } else {
-  shell_exec("xdg-open \"$google_gen_qr_link\" 2>/dev/null 1>/dev/null &");	
+  shell_exec("sudo xdg-open \"$temp_file\" 2>/dev/null 1>/dev/null &");	
 }
 // j) wait to user to scan the code - in polling mode
 echo "    scan QR code - got 60sec\n";
