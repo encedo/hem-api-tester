@@ -16,9 +16,7 @@ Using
 3. Upgrade the system and install the required packages. Open `terminal` and type:
 
    `sudo apt update`
-   
-   `sudo apt upgrade`
-   
+     
    `sudo apt install git php-cli`
 
 4. Clone this repository.
