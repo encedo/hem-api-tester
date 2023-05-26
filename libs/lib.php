@@ -12,7 +12,7 @@ date_default_timezone_set('UTC');
 
 function init_env() {
 
-	//gte global variables
+	//get global variables
 	global $cfg_domain, $cfg_epa_domain, $cfg_ppa_domain, $cfg_tester, $cfg_debug, $cfg_epa_chipid, $argv;
 
 	//set defaults
@@ -59,6 +59,9 @@ function parseHeaders( $headers )
 }
 
 function http_transaction($protocol, $method, $domain, $path, &$ret_data = false, &$post_data = false, $token = false, $upload_file = false) {
+  global $cfg_debug;
+
+  if ($cfg_debug >= 2) echo "HTTP Transaction\n";
 
   if (($protocol !== "http") && ($protocol !== "https")) return false;
   if (($method !== "GET") && ($method !== "POST") && ($method !== "DELETE")) return false;
@@ -71,6 +74,9 @@ function http_transaction($protocol, $method, $domain, $path, &$ret_data = false
       $postdata = $post_data;
     }
   }
+
+  $url = $protocol . "://" . $domain . $path;
+  if ($cfg_debug >= 2) echo "URL: $url\n";
 
   $opts = array(
     'http' => array(
@@ -104,23 +110,32 @@ function http_transaction($protocol, $method, $domain, $path, &$ret_data = false
     $opts['http']['timeout'] = 20;
   }
 
+  if ($cfg_debug >= 2) {echo "Opts: "; var_dump($opts);}
+
   $context = stream_context_create($opts);
   if ($context == false) return false;
-  $url = $protocol . "://" . $domain . $path;
+    
   $cont = @file_get_contents($url, false, $context);
   if ($cont === false) {
+    if ($cfg_debug >= 2) echo "\nHTTP Transaction error!\n";
     return false;
   }
 
-  if (!isset($http_response_header) || ($http_response_header == false)) return false;
+  if (!isset($http_response_header) || ($http_response_header == false)) {
+    if ($cfg_debug >= 2) echo "\nHTTP Response headers error!\n";
+    return false;
+  }
 
   $hdrs = parseHeaders($http_response_header);    
+  if ($cfg_debug >= 2) {echo "Headers: "; var_dump($hdrs);}
+  
   if ( (isset($hdrs["Content-Length"])) && (intval($hdrs["Content-Length"]) > 0) ) {
     $len = intval($hdrs["Content-Length"]);
     $ret_data = false;
 	  if ($len > 0) {
       if (strstr($hdrs["Content-Type"], "/json")) {
         $ret_data = json_decode($cont, true);
+        if ($cfg_debug >= 2) {echo "Resposne: "; var_dump($ret_data);}
       } else {
         $ret_data = $cont;
       }
@@ -241,7 +256,7 @@ function print_result($result_array) {
 
 function helper_checkin($cfg_domain) {
   $ret_val = false;
-  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/checkin", $ret_val);
+  $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/checkin", $ret_val);
   if ( $ret_stat != 200 ) return false;
   if ( !isset($ret_val['check']) ) return false;
   $post_data = $ret_val;
@@ -251,7 +266,7 @@ function helper_checkin($cfg_domain) {
   if ( !isset($ret_val['checked']) ) return false;
   $post_data = $ret_val;
   $ret_val = false;
-  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/checkin", $ret_val, $post_data);
+  $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/checkin", $ret_val, $post_data);
   if ( $ret_stat != 200 ) return false;
   if ( !isset($ret_val['status']) ) return false;
 
@@ -261,7 +276,7 @@ function helper_checkin($cfg_domain) {
 
 function helper_authorize($cfg_domain, $password, $scope = "scope", $exp = 3600) {
   $ret_val = false;
-  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/auth/token", $ret_val);
+  $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/auth/token", $ret_val);
   if ( $ret_stat != 200 ) return false;
   $auth_challange = $ret_val;
   //generate authentication kesy based on config constants
@@ -284,7 +299,7 @@ function helper_authorize($cfg_domain, $password, $scope = "scope", $exp = 3600)
   $auth_data_user = ejwt_generate($auth_val_user, $user_secret, $ext_pubkey);
   $post_data = json_encode( array('auth' => $auth_data_user) );
   $ret_val = false;
-  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/token", $ret_val, $post_data);
+  $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/auth/token", $ret_val, $post_data);
   if ( $ret_stat != 200 ) return false;
   $user_auth_token = $ret_val['token'];
   //echo "  USER token: $user_auth_token\n";
@@ -346,4 +361,3 @@ function encedo_log_integrity_check($pubkey, $log_array, &$output_log){
 
   return true;  //all process, no errors found
 }
-
