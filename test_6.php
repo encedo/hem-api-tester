@@ -14,6 +14,7 @@ $test_subtest_cnt = 2;
 init_env();
 $test_cfg = init_test($test_name, $test_descr, $test_subtest_cnt, $cfg_tester);
 if ( $cfg_debug ) var_dump( $cfg_domain );
+$test_cfg['elapsed'] = hrtime(true);
 
 echo "Processing...\n";
 
@@ -21,6 +22,7 @@ echo "Processing...\n";
 /////////////////////////////////////////////////////////////////////
 // Subtest: 1        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST1:
 echo "  subtest-1\n";
 $test_cfg['subtests'][1] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) get TOE status - discover correct domain & https status
@@ -53,7 +55,7 @@ if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
 $epk = $ret_val['epk'];
 // retrive auth challage
-$req = array( 'epk' => $epk, 'exp' => time()+60, 'scope' => "system:config");
+$req = array( 'epk' => $epk, 'exp' => time()+120, 'scope' => "system:config");
 $post_data = json_encode( $req );
 $ret_val = false;
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/request", $ret_val, $post_data);
@@ -106,6 +108,7 @@ $test_cfg['subtests'][1] = 'OK';                              // mark this subte
 /////////////////////////////////////////////////////////////////////
 // Subtest: 2        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST2:
 echo "  subtest-2\n";
 $test_cfg['subtests'][2] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) perform REMOTE USER authentication and expect DENY returned
@@ -172,6 +175,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 // Print summary      ///////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
 print_and_exit:
+  $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
   print_result( $test_cfg );  
   die;

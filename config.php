@@ -33,3 +33,6 @@ $cfg_ppa_domain = "my.ence.do";
 
 // (optional) var_dump() returned values
 $cfg_debug =  0;
+
+// (optional) enfoce my.ence.do domain for PPA
+$cfg_enforce_ppa_domain =  1;

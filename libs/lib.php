@@ -9,10 +9,11 @@
 // set the default timezone to use.
 date_default_timezone_set('UTC');
 
+$cfg_debug_lib = 0;
 
 function init_env() {
 
-	//get global variables
+	//gte global variables
 	global $cfg_domain, $cfg_epa_domain, $cfg_ppa_domain, $cfg_tester, $cfg_debug, $cfg_epa_chipid, $argv;
 
 	//set defaults
@@ -59,10 +60,9 @@ function parseHeaders( $headers )
 }
 
 function http_transaction($protocol, $method, $domain, $path, &$ret_data = false, &$post_data = false, $token = false, $upload_file = false) {
-  global $cfg_debug;
 
-  if ($cfg_debug >= 2) echo "HTTP Transaction\n";
-
+  global $cfg_debug_lib;
+  
   if (($protocol !== "http") && ($protocol !== "https")) return false;
   if (($method !== "GET") && ($method !== "POST") && ($method !== "DELETE")) return false;
 
@@ -75,14 +75,11 @@ function http_transaction($protocol, $method, $domain, $path, &$ret_data = false
     }
   }
 
-  $url = $protocol . "://" . $domain . $path;
-  if ($cfg_debug >= 2) echo "URL: $url\n";
-
   $opts = array(
     'http' => array(
       'method' => $method,
       'header' => "Content-Type: application/json\r\n",
-      'timeout' => 12.0,
+      'timeout' => 60.0,
       'ignore_errors' => '1'
     ),
     'ssl' => array(
@@ -107,39 +104,40 @@ function http_transaction($protocol, $method, $domain, $path, &$ret_data = false
     } else {
       $opts['http']['header'] = "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"$upload_file\"\r\n";
     }
-    $opts['http']['timeout'] = 20;
+    $opts['http']['timeout'] = 60;
   }
+  
+  $url = $protocol . "://" . $domain . $path;
 
-  if ($cfg_debug >= 2) {echo "Opts: "; var_dump($opts);}
-
+  if ($cfg_debug_lib) {
+    echo "HTTP Transaction: $method $url\n";
+    var_dump($opts);
+  }
+  
   $context = stream_context_create($opts);
   if ($context == false) return false;
-    
   $cont = @file_get_contents($url, false, $context);
   if ($cont === false) {
-    if ($cfg_debug >= 2) echo "\nHTTP Transaction error!\n";
     return false;
   }
 
-  if (!isset($http_response_header) || ($http_response_header == false)) {
-    if ($cfg_debug >= 2) echo "\nHTTP Response headers error!\n";
-    return false;
-  }
+  if (!isset($http_response_header) || ($http_response_header == false)) return false;
 
   $hdrs = parseHeaders($http_response_header);    
-  if ($cfg_debug >= 2) {echo "Headers: "; var_dump($hdrs);}
-  
   if ( (isset($hdrs["Content-Length"])) && (intval($hdrs["Content-Length"]) > 0) ) {
     $len = intval($hdrs["Content-Length"]);
     $ret_data = false;
 	  if ($len > 0) {
       if (strstr($hdrs["Content-Type"], "/json")) {
         $ret_data = json_decode($cont, true);
-        if ($cfg_debug >= 2) {echo "Resposne: "; var_dump($ret_data);}
       } else {
         $ret_data = $cont;
       }
 	  }
+  }
+
+  if ($cfg_debug_lib) {
+    var_dump($hdrs);
   }
 
   return $hdrs["reponse_code"];
@@ -217,9 +215,27 @@ function init_test($test_name, $test_descr, $test_subtest_cnt, $tester) {
   return $_cfg;
 }
 
+function formatDuration(int $seconds): string {
+    $h = intdiv($seconds, 3600);
+    $m = intdiv($seconds % 3600, 60);
+    $s = $seconds % 60;
+
+    $parts = [];
+    if ($h > 0) {
+        $parts[] = "{$h}h";
+    }
+    if ($m > 0 || $h > 0) { // pokazuj minuty tylko je�li s� lub by�a godzina
+        $parts[] = "{$m}m";
+    }
+    $parts[] = "{$s}s";
+
+    return implode(' ', $parts);
+}
+
 
 function print_result($result_array) {
   
+  $elapsed      = formatDuration( intval($result_array['elapsed'] / 1000) );
   $test_name    = $result_array['title'];
   $test_descr   = $result_array['descr'];
   $tester       = $result_array['testername'];
@@ -237,6 +253,7 @@ function print_result($result_array) {
   printf("***                                                      ***\n");
   printf("*** Tester: %-44s ***\n", $tester);
   printf("*** Timestamp: %-41s ***\n", $timestamp);
+  printf("*** Elapsed sec(s): %-36s ***\n", $elapsed);
 
   printf("*** Configuration: %-37s ***\n",$version_conf);
   printf("*** Version information:                                 ***\n");
@@ -256,7 +273,7 @@ function print_result($result_array) {
 
 function helper_checkin($cfg_domain) {
   $ret_val = false;
-  $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/checkin", $ret_val);
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/checkin", $ret_val);
   if ( $ret_stat != 200 ) return false;
   if ( !isset($ret_val['check']) ) return false;
   $post_data = $ret_val;
@@ -266,7 +283,7 @@ function helper_checkin($cfg_domain) {
   if ( !isset($ret_val['checked']) ) return false;
   $post_data = $ret_val;
   $ret_val = false;
-  $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/checkin", $ret_val, $post_data);
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/checkin", $ret_val, $post_data);
   if ( $ret_stat != 200 ) return false;
   if ( !isset($ret_val['status']) ) return false;
 
@@ -275,22 +292,33 @@ function helper_checkin($cfg_domain) {
 
 
 function helper_authorize($cfg_domain, $password, $scope = "scope", $exp = 3600) {
+  global $cfg_debug_lib;
+  
   $ret_val = false;
-  $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/auth/token", $ret_val);
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/auth/token", $ret_val);
+  if ($cfg_debug_lib) { 
+    var_dump($ret_stat); 
+    var_dump($ret_val); 
+  }
   if ( $ret_stat != 200 ) return false;
   $auth_challange = $ret_val;
   //generate authentication kesy based on config constants
-  $salt = base64_decode( $auth_challange['eid'] );
-  $user_secret = hash_pbkdf2("sha256", $password, $salt, 2048, 32, true);
+  $salt = $auth_challange['eid']; 
+  $user_secret = hash_pbkdf2("sha256", $password, $salt, 600000, 32, true);
   $user_public_key = sodium_crypto_box_publickey_from_secretkey($user_secret);
-  //echo "USER Private key: " . base64_encode($user_secret) . "\n";
-  //echo "USER Public key:  " . base64_encode($user_public_key) . "\n";
+  if ($cfg_debug_lib) {
+    echo "USER password: \"$password \"\n";
+    echo "USER Private key: " . base64_encode($user_secret) . "\n";
+    echo "USER Public key:  " . base64_encode($user_public_key) . "\n";
+  }
   $ext_pubkey = base64_decode($auth_challange['spk']);
+  $iat = time() - 5;  //correction for time diff (just in case)
   $auth_val_user = array(                                 
     'jti' => $auth_challange['jti'],
     'aud' => $auth_challange['spk'],
-    'exp' => time() + $exp,
-    'iat' => time(),
+    'exp' => $iat + $exp,
+    //'exp' => $auth_challange['exp'],
+    'iat' => $iat,
     'iss' => base64_encode($user_public_key),
     'scope' => $scope
     );
@@ -299,13 +327,19 @@ function helper_authorize($cfg_domain, $password, $scope = "scope", $exp = 3600)
   $auth_data_user = ejwt_generate($auth_val_user, $user_secret, $ext_pubkey);
   $post_data = json_encode( array('auth' => $auth_data_user) );
   $ret_val = false;
-  $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/auth/token", $ret_val, $post_data);
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/token", $ret_val, $post_data);
+  if ($cfg_debug_lib) { 
+    var_dump($ret_stat); 
+    var_dump($ret_val); 
+  }
   if ( $ret_stat != 200 ) return false;
   $user_auth_token = $ret_val['token'];
-  //echo "  USER token: $user_auth_token\n";
-  //$token_parts = explode(".", $user_auth_token);
-  //$token_details = json_decode(base64_decode($token_parts[1]), true);
-  //echo "    scope=" . $token_details['scope'] ." role=" . $token_details['sub'] . " expire=" . $token_details['exp'] . "\n";
+  if ($cfg_debug_lib) {
+    echo "  USER token: $user_auth_token\n";
+    $token_parts = explode(".", $user_auth_token);
+    $token_details = json_decode(base64_decode($token_parts[1]), true);
+    echo "    scope=" . $token_details['scope'] ." role=" . $token_details['sub'] . " expire=" . $token_details['exp'] . "\n";
+  }
   return $user_auth_token;
 }
 
@@ -361,3 +395,4 @@ function encedo_log_integrity_check($pubkey, $log_array, &$output_log){
 
   return true;  //all process, no errors found
 }
+

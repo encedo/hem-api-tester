@@ -14,6 +14,7 @@ $test_subtest_cnt = 3;
 init_env();
 $test_cfg = init_test($test_name, $test_descr, $test_subtest_cnt, $cfg_tester);
 if ( $cfg_debug ) var_dump( $cfg_domain );
+  $test_cfg['elapsed'] = hrtime(true);
 
 echo "Processing...\n";
 
@@ -21,6 +22,7 @@ echo "Processing...\n";
 /////////////////////////////////////////////////////////////////////
 // Subtest: 1        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST1:
 echo "  subtest-1\n";
 $test_cfg['subtests'][1] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) get TOE status - discover correct domain & https status
@@ -83,11 +85,11 @@ $qr_link = $ret_val['link'];
 $hash = 'not_implemented_yet';
 $qr_data = array( 'link' => $qr_link, 'hash' => $hash, 'user' => $encedo_config['user'], 'email' => $encedo_config['email'], 'hostname' => $encedo_config['hostname']);
 $qr_body = json_encode( $qr_data );
-$google_gen_qr_link = "https://chart.googleapis.com/chart?chs=500x500&cht=qr&choe=UTF-8&chl=" . urlencode( $qr_body );
+$google_gen_qr_link = "https://quickchart.io/qr?size=500&text=" . urlencode( $qr_body );
 if ( $cfg_debug ) var_dump( $google_gen_qr_link );     
 //echo "QR code link\n$google_gen_qr_link\n";
 $png = @file_get_contents($google_gen_qr_link);
-$temp_file = tempnam(sys_get_temp_dir(), 'encedo');
+$temp_file = tempnam(sys_get_temp_dir(), 'encedo') . '.png';
 file_put_contents($temp_file, $png);
 if (PHP_OS == "WINNT") {
   shell_exec("start $temp_file");
@@ -131,6 +133,7 @@ $test_cfg['subtests'][1] = 'OK';                              // mark this subte
 /////////////////////////////////////////////////////////////////////
 // Subtest: 2        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST2:
 echo "  subtest-2\n";
 $test_cfg['subtests'][2] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) perform local USER authentication
@@ -166,6 +169,7 @@ $test_cfg['subtests'][2] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 3        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST3:
 echo "  subtest-3\n";
 if ($diag_mode == false) {
   echo "    No DIAG mode, subtest will be skipped.\n";
@@ -215,6 +219,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 // Print summary      ///////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
 print_and_exit:
+  $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
   print_result( $test_cfg );  
   die;

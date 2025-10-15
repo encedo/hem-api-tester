@@ -7,13 +7,14 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-11";
 $test_descr = "Cryptography functionality";
-$test_subtest_cnt = 7;
+$test_subtest_cnt = 9;
 
 
 // initialize the execution env
 init_env();
 $test_cfg = init_test($test_name, $test_descr, $test_subtest_cnt, $cfg_tester);
 if ( $cfg_debug ) var_dump( $cfg_domain );
+$test_cfg['elapsed'] = hrtime(true);
 
 echo "Processing...\n";
 
@@ -21,6 +22,7 @@ echo "Processing...\n";
 /////////////////////////////////////////////////////////////////////
 // Subtest: 1        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST1:
 echo "  subtest-1\n";
 $test_cfg['subtests'][1] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) get TOE status - discover correct domain & https status
@@ -113,6 +115,7 @@ $test_cfg['subtests'][1] = 'OK';                              // mark this subte
 /////////////////////////////////////////////////////////////////////
 // Subtest: 2        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST2:
 echo "  subtest-2\n";
 $test_cfg['subtests'][2] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) generate keychain search over pattern keys for ExDSA operations - NIST curves
@@ -300,6 +303,7 @@ $test_cfg['subtests'][2] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 3        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST3:
 echo "  subtest-3\n";
 $test_cfg['subtests'][3] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) generate keychain search over pattern keys for AES operations
@@ -417,6 +421,7 @@ $test_cfg['subtests'][3] = 'OK';                            // mark this subtest
 /////////////////////////////////////////////////////////////////////
 // Subtest: 4        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST4:
 echo "  subtest-4\n";
 $test_cfg['subtests'][4] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) generate keychain search over pattern keys for AES operations
@@ -484,6 +489,7 @@ $test_cfg['subtests'][4] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 5        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST5:
 echo "  subtest-5\n";
 $test_cfg['subtests'][5] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) generate keychain search over pattern keys for ECDH operations - NIST curves
@@ -704,6 +710,7 @@ $test_cfg['subtests'][5] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 6        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST6:
 echo "  subtest-6\n";
 $test_cfg['subtests'][6] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) prerequirements
@@ -739,6 +746,7 @@ $test_cfg['subtests'][6] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 7        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST7:
 echo "  subtest-7\n";
 if ($diag_mode == false) {
   echo "    No DIAG mode, subtest will be skipped.\n";
@@ -791,9 +799,140 @@ $dummy_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $dummy_val, $token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
-sleep(10);  //wait 
+sleep(30);  //wait 
 // i) set result
 $test_cfg['subtests'][7] = 'OK';                           // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 8        ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST8:
+echo "  subtest-8\n";
+$test_cfg['subtests'][8] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) get TOE status 
+$ret_val = false;
+$ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);
+if ( $cfg_debug ) var_dump( $ret_val );
+if ( $ret_stat != 200 ) goto print_and_exit;
+// b) set RTC clock - code from T-1.3
+$ret = helper_checkin($cfg_domain);
+// c) generate keychain search over pattern keys for ML-KEM operations
+$pattern_plain = "CCTEST:T-10.1_MLKEM";   
+$pattern = "^".base64_encode($pattern_plain);  //^ denotes 'begining by following bytes' - like regexpr :)
+$offset = 0;
+$keychain = array();
+do {
+  $ret_val = false;
+  $post_array = array('descr' => $pattern, 'offset' => $offset );  //^ denotes 'begining by following bytes' - like regexpr :)
+  $post_data = json_encode( $post_array );    
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/search", $ret_val, $post_data);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 200 ) goto print_and_exit;    //200 if found, 404 if not
+  $total = $ret_val['total'];
+  $listed = $ret_val['listed'];
+  if ($listed == 0) break;  // go all the keys  
+  foreach($ret_val['list'] as $item) $keychain[] = $item; 
+  $offset = $offset + $listed;
+  if ($offset >= $total) break;
+} while (true);  
+// d) iterate over found keys to call ML-KEM Encapsulation and the Decapsulation
+//var_dump($keychain);
+$counter = 0;
+foreach($keychain as $item) {
+  $kid = $item['kid'];
+  // gen access token for that KID
+  $token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid");   // more here https://docs.encedo.com/hem-api/reference/api-reference/cryptography-operations/hmac#required-access-scope
+  if ($token == false) goto print_and_exit;                    // exit on error 
+  // encapsulation
+  $ret_val = false;
+  $oper_arg = array('kid' => $kid);
+  $post_data = json_encode( $oper_arg );    
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mlkem/encaps", $ret_val, $post_data, $token);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC hash generated
+  $ss_encaps = $ret_val['ss'];
+  $ct_encaps = $ret_val['ct'];
+  // decapsulation
+  $ret_val = false;
+  $oper_arg = array('kid' => $kid, 'ct' => $ct_encaps);
+  $post_data = json_encode( $oper_arg );    
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mlkem/decaps", $ret_val, $post_data, $token);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC verify success
+  // compate two SS values - should be equal
+  if ($ss_encaps !== $ret_val['ss']) goto print_and_exit;
+  $counter++;
+}
+// e) if above loop ends and no 'goto' calls, all ML-KEM tests passed!
+//echo "    Executed $counter tests over ". count($keychain) . " keys\n";
+if ($counter != count($keychain)) goto print_and_exit;
+// f) set result
+$test_cfg['subtests'][8] = 'OK';                           // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 9        ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST9:
+echo "  subtest-9\n";
+$test_cfg['subtests'][9] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) generate keychain search over pattern keys for ML-DSA operations
+$pattern_plain = "CCTEST:T-10.1_MLDSA";   
+$pattern = "^".base64_encode($pattern_plain);  //^ denotes 'begining by following bytes' - like regexpr :)
+$offset = 0;
+$keychain = array();
+do {
+  $ret_val = false;
+  $post_array = array('descr' => $pattern, 'offset' => $offset );  //^ denotes 'begining by following bytes' - like regexpr :)
+  $post_data = json_encode( $post_array );    
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/search", $ret_val, $post_data);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 200 ) goto print_and_exit;    //200 if found, 404 if not
+  $total = $ret_val['total'];
+  $listed = $ret_val['listed'];
+  if ($listed == 0) break;  // go all the keys  
+  foreach($ret_val['list'] as $item) $keychain[] = $item; 
+  $offset = $offset + $listed;
+  if ($offset >= $total) break;
+} while (true);  
+// b) iterate over found keys to call ML-DSA Sign & Verification
+//var_dump($keychain);
+$counter = 0;
+foreach($keychain as $item) {
+  $kid = $item['kid'];
+  // gen access token for that KID
+  $token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid");   // more here https://docs.encedo.com/hem-api/reference/api-reference/cryptography-operations/hmac#required-access-scope
+  if ($token == false) goto print_and_exit;                    // exit on error 
+  // sign
+  $msg_raw = base64_encode( openssl_random_pseudo_bytes( 250 ) );    // ranodm bytes of data
+  $ret_val = false;
+  $oper_arg = array('kid' => $kid, 'msg' => $msg_raw);
+  $post_data = json_encode( $oper_arg );    
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mldsa/sign", $ret_val, $post_data, $token);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC hash generated
+  $signature = $ret_val['sign'];
+  // verification
+  $ret_val = false;
+  $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'sign' => $signature);
+  $post_data = json_encode( $oper_arg );    
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mldsa/verify", $ret_val, $post_data, $token);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC verify success
+  $counter++;
+}
+// c) if above loop ends and no 'goto' calls, all ML-KEM tests passed!
+echo "    Executed $counter tests over ". count($keychain) . " keys\n";
+if ($counter != count($keychain)) goto print_and_exit;
+// d) set result
+$test_cfg['subtests'][9] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
@@ -816,6 +955,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 // Print summary      ///////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
 print_and_exit:
+  $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
   print_result( $test_cfg );  
   die;

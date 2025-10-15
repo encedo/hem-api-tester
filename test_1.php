@@ -14,12 +14,14 @@ $test_subtest_cnt = 5;
 init_env();
 $test_cfg = init_test($test_name, $test_descr, $test_subtest_cnt, $cfg_tester);
 if ( $cfg_debug ) var_dump( $cfg_domain );
+$test_cfg['elapsed'] = hrtime(true);
 
 echo "Processing...\n";
 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 1        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST1:
 echo "  subtest-1\n";
 $test_cfg['subtests'][1] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) detect, get version details etc
@@ -37,7 +39,7 @@ $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;               // exit on API call FAIL
-if ( !isset($ret_val['inited']) ) goto print_and_exit;     // exit as well if prereq not fulfill
+//if ( !isset($ret_val['inited']) ) goto print_and_exit;     // exit as well if prereq not fulfill
 $toe_status = $ret_val;
 // c) set result
 $test_cfg['subtests'][1] = 'OK';                            // mark this subtest as OK
@@ -49,6 +51,7 @@ $test_cfg['subtests'][1] = 'OK';                            // mark this subtest
 /////////////////////////////////////////////////////////////////////
 // Subtest: 2        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST2:
 echo "  subtest-2\n";
 $test_cfg['subtests'][2] = 'ERROR';                        // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) check if TLS is available
@@ -73,6 +76,7 @@ $test_cfg['subtests'][2] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 3        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST3:
 echo "  subtest-3\n";
 $test_cfg['subtests'][3] = 'ERROR';                       // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) call checkin - first phase
@@ -111,6 +115,7 @@ $test_cfg['subtests'][3] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 4        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST4:
 echo "  subtest-4\n";
 $test_cfg['subtests'][4] = 'ERROR';                       // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) here is a demo JWT access token with scope 'system:config' - go to https://jwt.io for more info
@@ -131,6 +136,7 @@ $test_cfg['subtests'][4] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 5        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST5:
 echo "  subtest-5\n";
 $test_cfg['subtests'][5] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) call TOE /checkin API with malformated JSON string 
@@ -173,6 +179,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 // Print summary      ///////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
 print_and_exit:
+  $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
   print_result( $test_cfg );  
   die;

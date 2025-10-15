@@ -6,16 +6,16 @@ include "config.php";
 
 // test name, descr & number of subtests
 $test_name = "T-7";
-$test_descr = "Firmware upgrade functionality functionality";
-$test_subtest_cnt = 1;    // just can run one of three tests
+$test_descr = "Firmware upgrade functionality";
+$test_subtest_cnt = 1;    // just can run ONLY one of three tests
 
 
 //a few test-specific consts
-//official firmware 1.0.1
-$filename_hex_path_official = "https://api.encedo.com/download/firmware/jysYQzxKRb21I5I5QGRuoUF3bCsb9Pcl2M3k8jI1gVQBZGIlE6nDDibJWkxP4-hml_3YhD17E2BlGF1yMCxRBg/hex";
+//official firmware 1.2.1 HEX
+$filename_hex_path_official = "https://ipfs.encedo.com/ipfs/QmU5Add6yXrWoRPRzjpeRYAnoHi6TrJeCQMJZA953YnPkA";
 
-//offical firmware 1.0.1 with enabled DIAG module (API endpoints /api/diag/...)
-$filename_hex_path_diagversion = "https://api.encedo.com/download/firmware/N2GotUmP4keUrgJTRFe9asMwjDTGzhCFnYxLTeIVxxVTOYT6yOWN_5aDg97oDBO2aKJqUHB9EfnYuIiFMFY8BA/bin";
+//offical firmware 1.2.1 with enabled DIAG module (API endpoints /api/diag/...) BIN
+$filename_hex_path_diagversion = "https://ipfs.encedo.com/ipfs/QmYjBGM3qDYC9SGiN4EEMDZAvT1QYZPeZ4k8HbVjXLf1tw";
 
 // official current version of the Encedo Manager
 $dahsboard_path = "https://api.encedo.com/download/dashboard/current";
@@ -34,21 +34,21 @@ $subtest_no = $arg;
 init_env();
 $test_cfg = init_test($test_name, $test_descr, array( $subtest_no => 'sel' ), $cfg_tester);
 if ( $cfg_debug ) var_dump( $cfg_domain );
-
+$test_cfg['elapsed'] = hrtime(true);
 
 echo "Processing...\n";
-if ($subtest_no == 1) goto subtest1; else
-if ($subtest_no == 2) goto subtest2; else
-if ($subtest_no == 3) goto subtest3; else {
+if ($subtest_no == 1) goto TEST1; else
+if ($subtest_no == 2) goto TEST2; else
+if ($subtest_no == 3) goto TEST3; else {
   echo "WTF?\n";
   die;
 }
 
 
-subtest1:
 /////////////////////////////////////////////////////////////////////
 // Subtest: 1        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST1:
 echo "  subtest-1\n";
 $test_cfg['subtests'][1] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) get TOE status - discover correct domain & https status
@@ -133,10 +133,10 @@ goto summary;
 /////////////////////////////////////////////////////////////////////
 
 
-subtest2:
 /////////////////////////////////////////////////////////////////////
 // Subtest: 2        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST2:
 echo "  subtest-2\n";
 $test_cfg['subtests'][2] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) get TOE status - discover correct domain & https status
@@ -222,10 +222,10 @@ goto summary;
 /////////////////////////////////////////////////////////////////////
 
 
-subtest3:
 /////////////////////////////////////////////////////////////////////
 // Subtest: 3        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST3:
 echo "  subtest-3\n";
 $test_cfg['subtests'][3] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) get TOE status - discover correct domain & https status
@@ -329,6 +329,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 // Print summary      ///////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
 print_and_exit:
+  $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
   print_result( $test_cfg );  
   die;

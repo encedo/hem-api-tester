@@ -4,11 +4,11 @@ include "libs/lib.php";
 include "config.php";
 
 
-//official firmware 1.0.1
-$filename_hex_path_official = "https://api.encedo.com/download/firmware/jysYQzxKRb21I5I5QGRuoUF3bCsb9Pcl2M3k8jI1gVQBZGIlE6nDDibJWkxP4-hml_3YhD17E2BlGF1yMCxRBg/hex";
+//official firmware 1.2.1
+$filename_hex_path_official = "https://ipfs.encedo.com/ipfs/QmU5Add6yXrWoRPRzjpeRYAnoHi6TrJeCQMJZA953YnPkA";
 
-//offical firmware 1.0.1 with enabled DIAG module (API endpoints /api/diag/...)
-$filename_hex_path_diagversion = "https://api.encedo.com/download/firmware/N2GotUmP4keUrgJTRFe9asMwjDTGzhCFnYxLTeIVxxVTOYT6yOWN_5aDg97oDBO2aKJqUHB9EfnYuIiFMFY8BA/hex";
+//offical firmware 1.2.1 with enabled DIAG module (API endpoints /api/diag/...)
+$filename_hex_path_diagversion = "https://ipfs.encedo.com/ipfs/QmNUNbMDCFnrRnaCNfWBPiENKEjo4a8NN33t33NUmYKDx8";
 
 // initialize the execution env
 init_env();

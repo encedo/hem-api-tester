@@ -18,6 +18,7 @@ init_env();
 $test_cfg = init_test($test_name, $test_descr, $test_subtest_cnt, $cfg_tester);
 if ( $cfg_debug ) var_dump( $cfg_domain );
 $default_domain = $cfg_domain;
+$test_cfg['elapsed'] = hrtime(true);
 
 echo "Processing...\n";
 
@@ -25,6 +26,7 @@ echo "Processing...\n";
 /////////////////////////////////////////////////////////////////////
 // Subtest: 1        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST1:
 echo "  subtest-1\n";
 $test_cfg['subtests'][1] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) get TOE status - discover correct domain & https status
@@ -88,6 +90,7 @@ $test_cfg['subtests'][1] = 'OK';                              // mark this subte
 /////////////////////////////////////////////////////////////////////
 // Subtest: 2        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST2:
 echo "  subtest-2\n";
 if ($diag_mode == false) {
   echo "    No DIAG mode, subtest will be skipped.\n";
@@ -162,6 +165,7 @@ Other test to perform. Enter:
 /////////////////////////////////////////////////////////////////////
 // Subtest: 3        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST3:
 echo "  subtest-3\n";
 $test_cfg['subtests'][3] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) check if back online
@@ -253,6 +257,7 @@ $test_cfg['subtests'][3] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 4        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST4:
 echo "  subtest-4\n";
 $test_cfg['subtests'][4] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) check if back online
@@ -356,6 +361,7 @@ $test_cfg['subtests'][4] = 'OK';                            // mark this subtest
 /////////////////////////////////////////////////////////////////////
 // Subtest: 5        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST5:
 echo "  subtest-5\n";
 $test_cfg['subtests'][5] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) check if back online
@@ -408,6 +414,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 // Print summary      ///////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
 print_and_exit:
+  $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
   print_result( $test_cfg );  
   die;

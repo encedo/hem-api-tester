@@ -14,16 +14,16 @@ $test_subtest_cnt = 3;
 init_env();
 $test_cfg = init_test($test_name, $test_descr, $test_subtest_cnt, $cfg_tester);
 if ( $cfg_debug ) var_dump( $cfg_domain );
+$test_cfg['elapsed'] = hrtime(true);
 
 $authkey = $cfg_authkey;
 
 echo "Processing...\n";
 
-echo "Change TLS CA by removing object and set true on cert validation";
-
 /////////////////////////////////////////////////////////////////////
 // Subtest: 1        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST1:
 echo "  subtest-1\n";
 $test_cfg['subtests'][1] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) get TOE status - discover correct domain & https status
@@ -61,12 +61,18 @@ if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;               // exit on API call FAIL
 if ( !isset($ret_val['status']) ) goto print_and_exit;    // exit as well if missformated reply
 // d) prepare new domain prefix and check availability
-$new_prefix = "cctest" . time();
+if ($cfg_enforce_ppa_domain == 0) {
+  $new_prefix = "cctest" . time();
+} else {   
+  $new_prefix = 'my';
+}
 $new_fqdn = $new_prefix . ".ence.do";
 echo "  New FQDN: $new_fqdn \n";
-$ret_val = false;
-$ret_stat = http_transaction("https", "GET", "api.encedo.com", "/domain/check/$new_prefix", $ret_val);
-if ( $ret_stat != 404 ) goto print_and_exit;                // 404 means domain prefix is free (available)
+if ($cfg_enforce_ppa_domain == 0) {
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "GET", "api.encedo.com", "/domain/check/$new_prefix", $ret_val);
+  if ( $ret_stat != 404 ) goto print_and_exit;                // 404 means domain prefix is free (available)
+}
 // e) call initialization - TOE challenge phase
 $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/auth/init", $ret_val);
@@ -76,14 +82,14 @@ $init_challange = $ret_val;
 // f) generate initialization data
 //generate authentication kesy based on config constants
 $password = $cfg_passpharse;
-$salt = base64_decode( $init_challange['eid'] );
-$user_secret = hash_pbkdf2("sha256", $password, $salt, 2048, 32, true);
+$salt = $init_challange['eid'];
+$user_secret = hash_pbkdf2("sha256", $password, $salt, 600000, 32, true);
 $user_public_key = sodium_crypto_box_publickey_from_secretkey($user_secret);
 //echo "USER Private key: " . base64_encode($user_secret) . "\n";
 //echo "USER Public key:  " . base64_encode($user_public_key) . "\n";
 $password = $cfg_passpharse_admin;
-$salt = base64_decode( $init_challange['eid'] );
-$admin_secret = hash_pbkdf2("sha256", $password, $salt, 2048, 32, true);
+$salt = $init_challange['eid'];
+$admin_secret = hash_pbkdf2("sha256", $password, $salt, 600000, 32, true);
 $admin_public_key = sodium_crypto_box_publickey_from_secretkey($admin_secret);
 //echo "ADMIN Private key: " . base64_encode($admin_secret) . "\n";
 //echo "ADMIN Public key:  " . base64_encode($admin_public_key) . "\n";
@@ -134,29 +140,40 @@ do {
 } while(true);
 // i) finish initialization - register TLS certificate, upload to HEM and reboot
 $ret_val = false;
-$post_array = array('csr' => $init_result['csr'], 'genuine' => $init_result['genuine']);
-if ( strstr($test_cfg['conf'], "EPA") ) {
-  $post_array['cname'] = $cfg_domain;
-} else {
-  $post_array['ip'] = "192.168.7.1";
-}
-$post_data = json_encode( $post_array );
-$ret_stat = http_transaction("https", "POST", "api.encedo.com", "/domain/register/$new_prefix/$authkey", $ret_val, $post_data);
-if ( $cfg_debug ) var_dump( $ret_val );
-if ( ( $ret_stat != 200 ) && ( $ret_stat != 201 ) ) goto print_and_exit;  // exit on API call FAIL
-if ( $ret_stat == 201 ) {
+if ($cfg_enforce_ppa_domain == 0) {
+  // register new custom domain and retreive cert
+  $post_array = array('csr' => $init_result['csr'], 'genuine' => $init_result['genuine']);
+  if ( strstr($test_cfg['conf'], "EPA") ) {
+    $post_array['cname'] = $cfg_domain;
+  } else {
+    $post_array['ip'] = "192.168.7.1";
+  }
+  $post_data = json_encode( $post_array );
+  $ret_stat = http_transaction("https", "POST", "api.encedo.com", "/domain/register/$new_prefix/$authkey", $ret_val, $post_data);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( ( $ret_stat != 200 ) && ( $ret_stat != 201 ) ) goto print_and_exit;  // exit on API call FAIL
+  if ( $ret_stat == 201 ) {
   // issuing may takes time - pull backedn until is not ready
-  $id = $ret_val['id'];
-  do {
-    $ret_val = false;
-    $ret_stat = http_transaction("https", "GET", "api.encedo.com", "/domain/register/$id", $ret_val);
-    if ( $cfg_debug ) var_dump( $ret_val );
-    if ( $ret_stat == 200 ) break;
-    if ( $ret_stat >= 400 ) goto print_and_exit;  // exit on API call FAIL
-    sleep(3);
-  } while(true);  
-  $cert_data = $ret_val;
+    $id = $ret_val['id'];
+    do {
+      $ret_val = false;
+      $ret_stat = http_transaction("https", "GET", "api.encedo.com", "/domain/register/$id", $ret_val);
+      if ( $cfg_debug ) var_dump( $ret_val );
+      if ( $ret_stat == 200 ) break;
+      if ( $ret_stat >= 400 ) goto print_and_exit;  // exit on API call FAIL
+      sleep(3);
+    } while(true);  
+    $cert_data = $ret_val;
+  } else {
+    $cert_data = $ret_val;
+  }
 } else {
+  // ask for standard domain - a'ka public
+  $post_array = array('genuine' => $init_result['genuine'], 'ip' => "192.168.7.1");
+  $post_data = json_encode( $post_array );
+  $ret_stat = http_transaction("https", "POST", "api.encedo.com", "/domain/register/$new_prefix/$authkey", $ret_val, $post_data);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 200 ) goto print_and_exit;  // exit on API call FAIL
   $cert_data = $ret_val;
 }
 //echo "update config\n";
@@ -216,6 +233,7 @@ $test_cfg['subtests'][1] = 'OK';                            // mark this subtest
 /////////////////////////////////////////////////////////////////////
 // Subtest: 2        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST2:
 echo "  subtest-2\n";
 $test_cfg['subtests'][2] = 'ERROR';                        // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) check if can repeat the initialization
@@ -233,6 +251,7 @@ $test_cfg['subtests'][2] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 3        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST3:
 echo "  subtest-3\n";
 $test_cfg['subtests'][3] = 'ERROR';                       // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) get TOE status - discover correct domain & https status
@@ -278,6 +297,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 // Print summary      ///////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
 print_and_exit:
+  $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
   print_result( $test_cfg );  
   die;

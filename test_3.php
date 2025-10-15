@@ -14,12 +14,14 @@ $test_subtest_cnt = 5;
 init_env();
 $test_cfg = init_test($test_name, $test_descr, $test_subtest_cnt, $cfg_tester);
 if ( $cfg_debug ) var_dump( $cfg_domain );
+$test_cfg['elapsed'] = hrtime(true);
 
 echo "Processing...\n";
 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 1        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST1:
 echo "  subtest-1\n";
 $test_cfg['subtests'][1] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) get TOE status - discover correct domain & https status
@@ -30,6 +32,7 @@ if ( $ret_stat != 200 ) goto print_and_exit;
 if ( isset($ret_val['inited']) ) goto print_and_exit;      // exit as well if prereq not fulfill - dev not inited!
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
   $cfg_domain = $ret_val['hostname'];                      
+  echo "  New FQDN: $cfg_domain \n";
 }
 // b) detect, get version details etc
 $ret_val = false;
@@ -67,8 +70,8 @@ if ( $ret_stat != 200 ) goto print_and_exit;               // exit on API call F
 $auth_challange = $ret_val;
 //generate authentication kesy based on config constants
 $password = $cfg_passpharse;
-$salt = base64_decode( $auth_challange['eid'] );
-$user_secret = hash_pbkdf2("sha256", $password, $salt, 2048, 32, true);
+$salt = $auth_challange['eid'];
+$user_secret = hash_pbkdf2("sha256", $password, $salt, 600000, 32, true);
 $user_public_key = sodium_crypto_box_publickey_from_secretkey($user_secret);
 //echo "USER Private key: " . base64_encode($user_secret) . "\n";
 //echo "USER Public key:  " . base64_encode($user_public_key) . "\n";
@@ -79,7 +82,8 @@ $auth_val_user = array(
   'exp' => $auth_challange['exp'],
   'iat' => time(),
   'iss' => base64_encode($user_public_key),
-  'scope' => "system:config"
+  'scope' => "system:config",
+  'ctx' => "place_here_max_64chars"
   );
 unset($auth_challange);  
 //authentication USER and get token
@@ -90,6 +94,7 @@ $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/token", $r
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;               // exit on API call FAIL
 $user_auth_token = $ret_val['token'];
+$user_auth_token_save = $user_auth_token;
 //echo "  USER token: $user_auth_token\n";
 $token_parts = explode(".", $user_auth_token);
 $token_details = json_decode(base64_decode($token_parts[1]), true);
@@ -103,8 +108,8 @@ if ( $ret_stat != 200 ) goto print_and_exit;               // exit on API call F
 $auth_challange = $ret_val;                                 //renew challange
 //generate authentication kesy based on config constants
 $password = $cfg_passpharse_admin;
-$salt = base64_decode( $auth_challange['eid'] );
-$admin_secret = hash_pbkdf2("sha256", $password, $salt, 2048, 32, true);
+$salt = $auth_challange['eid'];
+$admin_secret = hash_pbkdf2("sha256", $password, $salt, 600000, 32, true);
 $admin_public_key = sodium_crypto_box_publickey_from_secretkey($admin_secret);
 //echo "ADMIN Private key: " . base64_encode($admin_secret) . "\n";
 //echo "ADMIN Public key:  " . base64_encode($admin_public_key) . "\n";
@@ -141,6 +146,7 @@ $test_cfg['subtests'][1] = 'OK';                            // mark this subtest
 /////////////////////////////////////////////////////////////////////
 // Subtest: 2        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST2:
 echo "  subtest-2\n";
 $test_cfg['subtests'][2] = 'ERROR';                        // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) check ROLE validation
@@ -179,6 +185,7 @@ $test_cfg['subtests'][2] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 3        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST3:
 echo "  subtest-3\n";
 $test_cfg['subtests'][3] = 'ERROR';                       // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) performe correct user authentication 
@@ -189,8 +196,8 @@ if ( $ret_stat != 200 ) goto print_and_exit;               // exit on API call F
 $auth_challange = $ret_val;
 //generate authentication kesy based on config constants
 $password = $cfg_passpharse;
-$salt = base64_decode( $auth_challange['eid'] );
-$user_secret = hash_pbkdf2("sha256", $password, $salt, 2048, 32, true);
+$salt = $auth_challange['eid'];
+$user_secret = hash_pbkdf2("sha256", $password, $salt, 600000, 32, true);
 $user_public_key = sodium_crypto_box_publickey_from_secretkey($user_secret);
 $ext_pubkey = base64_decode($auth_challange['spk']);
 $auth_val_user = array(                                 
@@ -227,8 +234,8 @@ do {
   $auth_challange = $ret_val;
   //generate authentication kesy based on config constants
   $password = "wrong password";
-  $salt = base64_decode( $auth_challange['eid'] );
-  $user_secret = hash_pbkdf2("sha256", $password, $salt, 2048, 32, true);
+  $salt = $auth_challange['eid'] ;
+  $user_secret = hash_pbkdf2("sha256", $password, $salt, 600000, 32, true);
   $user_public_key = sodium_crypto_box_publickey_from_secretkey($user_secret);
   $ext_pubkey = base64_decode($auth_challange['spk']);
   $auth_val_user = array(                                 
@@ -249,12 +256,12 @@ do {
   $hrts = intval((hrtime(true) - $hrts) / 1000000);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 401 ) goto print_and_exit;               // expected 401 as auth is invalid (wrong password)
-  //echo "    elapsed (ms): $hrts\n";
+  //echo "    elapsed (ms): $hrts (ref:$auth_correct_issue_time)\n";
   //check round
   $counter++;
-  //regards SFR FPT_AFL.1 - after 3 failed authentication, response time is 3x loger (3x500ms insteed of 500ms )
-  if ($counter >= 3) {
-     if ($hrts > 3*500) { 
+  //regards SFR FPT_AFL.1 - after 3 failed authentication, response time is 3x loger (3x500ms insteed of 1x500ms )
+  if ($counter > 3) {
+     if ($hrts > (3*500)) { 
        $subtest3_ok = true;                                 // expected correct result - after 3 failed auth response time increase
        $last_failed_auth_time = time();                     //save timestamp of last failed authentication
      }
@@ -276,8 +283,8 @@ do {
   $auth_challange = $ret_val;
   //generate authentication kesy based on config constants
   $password = $cfg_passpharse;
-  $salt = base64_decode( $auth_challange['eid'] );
-  $user_secret = hash_pbkdf2("sha256", $password, $salt, 2048, 32, true);
+  $salt = $auth_challange['eid'];
+  $user_secret = hash_pbkdf2("sha256", $password, $salt, 600000, 32, true);
   $user_public_key = sodium_crypto_box_publickey_from_secretkey($user_secret);
   $ext_pubkey = base64_decode($auth_challange['spk']);
   $auth_val_user = array(                                 
@@ -324,6 +331,7 @@ $test_cfg['subtests'][3] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 4        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST4:
 echo "  subtest-4\n";
 $test_cfg['subtests'][4] = 'ERROR';                       // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) performe correct user authentication 
@@ -334,8 +342,8 @@ if ( $ret_stat != 200 ) goto print_and_exit;               // exit on API call F
 $auth_challange = $ret_val;
 //generate authentication kesy based on config constants
 $password = $cfg_passpharse;
-$salt = base64_decode( $auth_challange['eid'] );
-$user_secret = hash_pbkdf2("sha256", $password, $salt, 2048, 32, true);
+$salt = $auth_challange['eid'];
+$user_secret = hash_pbkdf2("sha256", $password, $salt, 600000, 32, true);
 $user_public_key = sodium_crypto_box_publickey_from_secretkey($user_secret);
 $ext_pubkey = base64_decode($auth_challange['spk']);
 $auth_val_user = array(                                 
@@ -383,11 +391,11 @@ $test_cfg['subtests'][4] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 5        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+TEST5:
 echo "  subtest-5\n";
 $test_cfg['subtests'][5] = 'ERROR';                       // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) performe correct user authentication 
-//helper function wraping local authentication code into single function
-$token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config", 30); 
+$token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config", 120); 
 if ($token == false) goto print_and_exit;
 // b) check token by using it
 $ret_val = false;
@@ -403,7 +411,7 @@ $token_details = json_decode(base64_decode($token_parts[1]), true);
 //echo " Token EXP: " . date("H:i:s", $token_details['exp']) . "\n";
 $slp = $token_details['exp'] - time();
 //echo " sleep for: $slp sec\n";
-sleep($slp + 1);
+sleep($slp + 3);
 //echo "Local time: " . date("H:i:s") . "\n";
 // d) check token by using it - should fail
 $ret_val = false;
@@ -434,6 +442,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 // Print summary      ///////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
 print_and_exit:
+  $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
   print_result( $test_cfg );  
   die;

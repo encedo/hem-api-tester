@@ -20,7 +20,7 @@ if ( $ret_stat != 200 ) goto print_and_exit;
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
   $cfg_domain = $ret_val['hostname'];                      
 }
-// b) get access token if needed - only if device is inited
+// b) get access token is needed - only if device is inited
 $token = false;
 if ( !isset($ret_val['inited']) ) {
   $ret = helper_checkin($cfg_domain);
@@ -29,15 +29,13 @@ if ( !isset($ret_val['inited']) ) {
   if ($token == false) goto print_and_exit;                   
   $post_data = json_encode( array( 'wipeout' => true ) );
   $ret_val = false;
-  $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token);
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;
   echo "Done\n";
   exit;
-  
 } else {
   echo "Nothing to do\n";
-  exit;
 }
 
 
