@@ -14,7 +14,7 @@ $cfg_debug_lib = 0;
 function init_env() {
 
 	//gte global variables
-	global $cfg_domain, $cfg_epa_domain, $cfg_ppa_domain, $cfg_tester, $cfg_debug, $cfg_epa_chipid, $argv;
+	global $cfg_domain, $cfg_epa_domain, $cfg_ppa_domain, $cfg_tester, $cfg_debug, $cfg_epa_chipid, $argv, $cfg_enforce_ppa_domain;
 
 	//set defaults
 	$cfg_domain = $cfg_ppa_domain;
@@ -38,6 +38,7 @@ function init_env() {
 	// parse env argument
 	if (isset($argv[1]) && ($argv[1] == "epa")) {
     $cfg_domain =  "c$cfg_epa_chipid.$cfg_epa_domain";
+    $cfg_enforce_ppa_domain = 0;
 	}
 }
 
