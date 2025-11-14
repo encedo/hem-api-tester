@@ -39,7 +39,10 @@ $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;               // exit on API call FAIL
-//if ( !isset($ret_val['inited']) ) goto print_and_exit;     // exit as well if prereq not fulfill
+if ( intval($ret_val['fls_state']) !== 0) {
+  echo "ERROR: fls_state !=0, is " . $ret_val['fls_state'] . "\r\n";
+  goto print_and_exit;     // exit as well if prereq not fulfill
+}
 $toe_status = $ret_val;
 // c) set result
 $test_cfg['subtests'][1] = 'OK';                            // mark this subtest as OK

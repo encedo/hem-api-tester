@@ -30,6 +30,10 @@ $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
 if ( isset($ret_val['inited']) ) goto print_and_exit;      // exit as well if prereq not fulfill - dev not inited!
+if ( intval($ret_val['fls_state']) !== 0) {
+  echo "ERROR: fls_state !=0, is " . $ret_val['fls_state'] . "\r\n";
+  goto print_and_exit;     // exit as well if prereq not fulfill
+}
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
   $cfg_domain = $ret_val['hostname'];                      
 }

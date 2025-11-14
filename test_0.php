@@ -41,6 +41,10 @@ if ( $ret_stat != 200 ) goto print_and_exit;
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
   $cfg_domain = $ret_val['hostname'];                      
 }
+if ( intval($ret_val['fls_state']) !== 0) {
+  echo "ERROR: fls_state !=0, is " . $ret_val['fls_state'] . "\r\n";
+  goto print_and_exit;     // exit as well if prereq not fulfill
+}
 $toe_status = $ret_val;
 // c) set result
 $test_cfg['subtests'][1] = 'OK';                            // mark this subtest as OK
