@@ -91,7 +91,6 @@ $qr_data = array( 'link' => $qr_link, 'hash' => $hash, 'user' => $encedo_config[
 $qr_body = json_encode( $qr_data );
 $google_gen_qr_link = "https://quickchart.io/qr?size=500&text=" . urlencode( $qr_body );
 if ( $cfg_debug ) var_dump( $google_gen_qr_link );     
-//echo "QR code link\n$google_gen_qr_link\n";
 $png = @file_get_contents($google_gen_qr_link);
 $temp_file = tempnam(sys_get_temp_dir(), 'encedo') . '.png';
 file_put_contents($temp_file, $png);
@@ -101,7 +100,8 @@ if (PHP_OS == "WINNT") {
   shell_exec("sudo xdg-open \"$temp_file\" 2>/dev/null 1>/dev/null &");	
 }
 // j) wait to user to scan the code - in polling mode
-echo "    scan QR code - got 60sec\n";
+echo "    scan QR code - you have 60sec\n";
+echo "    Don't see the code? Go to this URL: " . $google_gen_qr_link . "\n";
 $count = 0;
 do {
   $ret_val = false;
