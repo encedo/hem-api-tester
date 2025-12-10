@@ -122,6 +122,12 @@ function http_transaction($protocol, $method, $domain, $path, &$ret_data = false
     return false;
   }
 
+
+  // For PHP >= 8.4.0
+  if (function_exists('http_get_last_response_headers')) {
+    $http_response_header = http_get_last_response_headers();
+  }
+  
   if (!isset($http_response_header) || ($http_response_header == false)) return false;
 
   $hdrs = parseHeaders($http_response_header);    
