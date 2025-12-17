@@ -280,7 +280,7 @@ function print_result($result_array) {
 
 function helper_checkin($cfg_domain) {
   $ret_val = false;
-  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/checkin", $ret_val);
+  $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/checkin", $ret_val);
   if ( $ret_stat != 200 ) return false;
   if ( !isset($ret_val['check']) ) return false;
   $post_data = $ret_val;
@@ -290,7 +290,7 @@ function helper_checkin($cfg_domain) {
   if ( !isset($ret_val['checked']) ) return false;
   $post_data = $ret_val;
   $ret_val = false;
-  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/checkin", $ret_val, $post_data);
+  $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/checkin", $ret_val, $post_data);
   if ( $ret_stat != 200 ) return false;
   if ( !isset($ret_val['status']) ) return false;
 
@@ -302,7 +302,7 @@ function helper_authorize($cfg_domain, $password, $scope = "scope", $exp = 3600)
   global $cfg_debug_lib;
   
   $ret_val = false;
-  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/auth/token", $ret_val);
+  $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/auth/token", $ret_val);
   if ($cfg_debug_lib) { 
     var_dump($ret_stat); 
     var_dump($ret_val); 
@@ -334,7 +334,7 @@ function helper_authorize($cfg_domain, $password, $scope = "scope", $exp = 3600)
   $auth_data_user = ejwt_generate($auth_val_user, $user_secret, $ext_pubkey);
   $post_data = json_encode( array('auth' => $auth_data_user) );
   $ret_val = false;
-  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/token", $ret_val, $post_data);
+  $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/auth/token", $ret_val, $post_data);
   if ($cfg_debug_lib) { 
     var_dump($ret_stat); 
     var_dump($ret_val); 

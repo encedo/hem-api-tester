@@ -29,7 +29,7 @@ if ( !isset($ret_val['inited']) ) {
   if ($token == false) goto print_and_exit;                   
   $post_data = json_encode( array( 'wipeout' => true ) );
   $ret_val = false;
-  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token);
+  $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;
   echo "Done\n";
