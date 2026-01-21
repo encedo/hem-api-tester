@@ -223,7 +223,7 @@ if ( strstr($test_cfg['conf'], "PPA") ) {
   $ret_val = false;
   $not_used = false;    //dummy
   $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config/attestation", $ret_val, $not_used, $token);
-  var_dump($ret_stat);
+  //var_dump($ret_stat);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 409 ) goto print_and_exit;                //expected is 409 - failer state
 }

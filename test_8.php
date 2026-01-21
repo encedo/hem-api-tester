@@ -248,7 +248,10 @@ do {
   }
   if (strlen($probe_buf) >= $probe_size) break;
 } while(true);
-mkdir("./out");
+$path = "./out";
+if (!file_exists($path)) {
+    mkdir($path);
+}
 file_put_contents($filename_probe, $probe_buf);
 //echo date(DATE_RFC2822);
 // j) set result
@@ -351,10 +354,42 @@ do {
 if ($ret_val['fls_state'] == 0) goto print_and_exit;          // expected result if fls_state = 8 
 // j) wipe-out configuration - this error cannot be cleared or the key deleted (fls prohibits)
 $ret_val = false;
-$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/diag/wipe_config  ", $ret_val);
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/diag/wipe_config", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                
 sleep(30);
+//fix wipe out TLS certificate
+//only for PPA
+if (strcmp($test_cfg['conf'], "ENCEDO PPA") == 0) {
+  $ret_val = false;
+  $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/config/attestation  ", $ret_val);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 200 ) goto print_and_exit;                
+  $new_prefix = 'my';
+  // ask for standard domain - a'ka public
+  $post_array = array('genuine' => $ret_val['genuine']);
+  $post_data = json_encode( $post_array );
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", "api.encedo.com", "/domain/register/$new_prefix", $ret_val, $post_data);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 200 ) goto print_and_exit;  // exit on API call FAIL
+  $cert_data = $ret_val;
+  //echo "update config\n";
+  $ret_val = false;
+  $post_data = json_encode( array('tls' => $cert_data) );
+  $token = $init_result['token'];
+  $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 200 ) goto print_and_exit;               // exit on API call FAIL
+  //echo "updated\n";
+  $ret_val = false;
+  $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/reboot", $ret_val);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 200 ) goto print_and_exit;               // exit on API call FAIL
+  sleep(15);
+} else {
+  echo "    Encedo EPA is shutdown! Ask administrator to reboot. Click Enter to confirm.";
+}
 // k) set result
 $test_cfg['subtests'][4] = 'OK';                            // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////

@@ -11,11 +11,11 @@ $test_subtest_cnt = 1;    // just can run ONLY one of three tests
 
 
 //a few test-specific consts
-//official firmware 1.2.1 HEX
-$filename_hex_path_official = "https://ipfs.encedo.com/ipfs/QmU5Add6yXrWoRPRzjpeRYAnoHi6TrJeCQMJZA953YnPkA";
+//official firmware 1.2.2 HEX
+$filename_hex_path_official = "https://ipfs.encedo.com/ipfs/QmSAXaeRhNqHcaSpW2x8rcAYvdQGqXjd4TyNLMG7RaVy82";
 
-//offical firmware 1.2.1 with enabled DIAG module (API endpoints /api/diag/...) BIN
-$filename_hex_path_diagversion = "https://ipfs.encedo.com/ipfs/QmYjBGM3qDYC9SGiN4EEMDZAvT1QYZPeZ4k8HbVjXLf1tw";
+//offical firmware 1.2.2 with enabled DIAG module (API endpoints /api/diag/...) BIN
+$filename_hex_path_diagversion = "https://ipfs.encedo.com/ipfs/QmNMhZkdsBB8fikUWAcJC1EeiSqnfSSdvHajW136TDYaqo";
 
 // official current version of the Encedo Manager
 $dahsboard_path = "https://api.encedo.com/download/dashboard/current";

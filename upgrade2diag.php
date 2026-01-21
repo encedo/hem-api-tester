@@ -4,11 +4,11 @@ include "libs/lib.php";
 include "config.php";
 
 
-//official firmware 1.2.1
-$filename_hex_path_official = "https://ipfs.encedo.com/ipfs/QmU5Add6yXrWoRPRzjpeRYAnoHi6TrJeCQMJZA953YnPkA";
+//official firmware 1.2.2
+$filename_hex_path_official = "https://ipfs.encedo.com/ipfs/QmSAXaeRhNqHcaSpW2x8rcAYvdQGqXjd4TyNLMG7RaVy82";
 
-//offical firmware 1.2.1 with enabled DIAG module (API endpoints /api/diag/...)
-$filename_hex_path_diagversion = "https://ipfs.encedo.com/ipfs/QmNUNbMDCFnrRnaCNfWBPiENKEjo4a8NN33t33NUmYKDx8";
+//offical firmware 1.2.2 with enabled DIAG module (API endpoints /api/diag/...)
+$filename_hex_path_diagversion = "https://ipfs.encedo.com/ipfs/QmQXxKp9W1mE1Xxn9MUaYoQfTGRMfz24bTCwidvLCR3sro";
 
 // initialize the execution env
 init_env();
@@ -33,6 +33,10 @@ $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
+if ( intval($ret_val['fls_state']) !== 0) {
+  echo "ERROR: fls_state !=0, is " . $ret_val['fls_state'] . "\r\n";
+  goto print_and_exit;     // exit as well if prereq not fulfill
+}
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
   $cfg_domain = $ret_val['hostname'];                      
 }

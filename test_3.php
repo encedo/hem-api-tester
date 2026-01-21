@@ -276,7 +276,7 @@ do {
 if ($subtest3_ok == false) goto print_and_exit;          // subtest failed - 3 (three) wrong auth not detected
 // c) now correct auth for next 20sec
 $start_time = $last_failed_auth_time - 1;                 //-1 as a jitter, we measure time inaccurate (1sec res only)
-//echo "start time: $start_time \n";
+//echo "NEXT PHASE start time: $start_time \n";
 $counter = 0;
 $subtest3_ok = false;
 do {
@@ -308,7 +308,7 @@ do {
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/token", $ret_val, $post_data);
   $hrts = intval((hrtime(true) - $hrts) / 1000000);
   if ( $cfg_debug ) var_dump( $ret_val );
-  if ( $ret_stat != 200 ) goto print_and_exit;               // expected 401 as auth is invalid (wrong password)
+  if ( $ret_stat != 200 ) goto print_and_exit;               // expected 200 as auth is valid (correct password)
   //echo "    elapsed (ms): $hrts\n";
   // check round
   $counter++;

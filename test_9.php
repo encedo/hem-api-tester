@@ -73,7 +73,6 @@ if ($ret == false) goto print_and_exit;                   // ups - wtf?
 $log = false;
 if ( strstr($test_cfg['conf'], "PPA") ) {
   // this is code for Encedo PPA
-echo "1\n";  
   //a) get current list of log entries
   $ret_val = false;
   $dummy_val = false;
@@ -89,7 +88,6 @@ echo "1\n";
   $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $dummy_val, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
-echo "2\n";
   sleep(60);  //wait 
   //c) new log, new authentication
   $ret = helper_checkin($cfg_domain);
@@ -101,7 +99,6 @@ echo "2\n";
   $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $dummy_val, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
-echo "3\n";
   sleep(60);  //wait 
   //d) new log, new authentication
   $ret = helper_checkin($cfg_domain);
