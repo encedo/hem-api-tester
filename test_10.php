@@ -102,6 +102,7 @@ $support_key_types = array( "SECP256R1" => ['mode' => "ECDH,ExDSA", "isECDH" => 
 );
 $ecdh_kids = array();
 $created = 0;
+$n_pub = 0;
 foreach($support_key_types as $item => $args) {
   unset($keycreate_arg);
   $label = "T-10.1 GEN $item";
@@ -110,6 +111,8 @@ foreach($support_key_types as $item => $args) {
   if (isset($args['mode'])) {
     $keycreate_arg['mode'] = $args['mode'];     //add mode
   }
+  $ret_pub = (($n_pub++ % 2) == 1);             // DEV-421: every second key is created with 'return_pubkey'
+  if ($ret_pub) $keycreate_arg['return_pubkey'] = true;
   $ret_val = false;
   $post_data = json_encode($keycreate_arg);
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_keygen);
@@ -117,6 +120,29 @@ foreach($support_key_types as $item => $args) {
   if ( $ret_stat != 200 ) goto print_and_exit;                // expected is 200 (OK)
   $kid = $ret_val['kid'];
   //echo "    KID ($item): $kid  \"$descr\"\n";  
+  // DEV-421: 'pubkey' only if requested and only for asymmetric key types
+  $is_asym = (preg_match('/^(SECP|CURVE|ED|MLKEM|MLDSA)/', $item) == 1);
+  if ( isset($ret_val['pubkey']) != ($ret_pub && $is_asym) ) {
+    echo "ERROR: $item return_pubkey=" . ($ret_pub ? "true" : "false") . ", pubkey " . (isset($ret_val['pubkey']) ? "present" : "missing") . "\n";
+    goto print_and_exit;
+  }
+  // DEV-435: create returns the key attributes (type, updated, descr)
+  if ( (@$ret_val['type'] !== $item) || !isset($ret_val['updated']) || (@$ret_val['descr'] !== $descr) ) {
+    echo "ERROR: $item create reply attributes: " . json_encode($ret_val) . "\n";
+    goto print_and_exit;
+  }
+  // create reply must match the key read back by GET
+  $create_val = $ret_val;
+  $ret_val = false;
+  $dummy_val = false;
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/$kid", $ret_val, $dummy_val, $token_keygen);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 200 ) goto print_and_exit;
+  if ( (@$ret_val['type'] !== $create_val['type']) || (@$ret_val['updated'] !== $create_val['updated']) || (@$ret_val['descr'] !== $create_val['descr']) ||
+       (isset($create_val['pubkey']) && (@$ret_val['pubkey'] !== $create_val['pubkey'])) ) {
+    echo "ERROR: $item create/get mismatch: " . json_encode($create_val) . " vs " . json_encode($ret_val) . "\n";
+    goto print_and_exit;
+  }
   $created++;
   // build a list of keys for ECDH
   if (isset($args['isECDH'])) {
@@ -170,12 +196,37 @@ foreach($ecdh_kids as $kid_ecdh => $type_ecdh) {
     if (isset($args['mode'])) {
       $keycreate_arg['mode'] = $args['mode'];     //add mode
     }
+    $ret_pub = (($n_pub++ % 2) == 1);             // DEV-421: every second key is derived with 'return_pubkey'
+    if ($ret_pub) $keycreate_arg['return_pubkey'] = true;
     $ret_val = false;
     $post_data = json_encode($keycreate_arg);    
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/derive", $ret_val, $post_data, $token_keygen);
     if ( $cfg_debug ) var_dump( $ret_stat );
     if ( $cfg_debug ) var_dump( $ret_val );
-    if ( $ret_stat == 200 ) $created++; 
+    if ( $ret_stat == 200 ) {
+      $created++; 
+      // DEV-421 + DEV-435: same reply rules as create
+      $kid = $ret_val['kid'];
+      $is_asym = (preg_match('/^(SECP|CURVE|ED|MLKEM|MLDSA)/', $item) == 1);
+      if ( (isset($ret_val['pubkey']) != ($ret_pub && $is_asym)) ||
+           (@$ret_val['type'] !== $item) || !isset($ret_val['updated']) || (@$ret_val['descr'] !== $descr) ) {
+        echo "ERROR: derive $item ($type_ecdh) reply: " . json_encode($ret_val) . "
+";
+        goto print_and_exit;
+      }
+      $create_val = $ret_val;
+      $ret_val = false;
+      $dummy_val = false;
+      $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/$kid", $ret_val, $dummy_val, $token_keygen);
+      if ( $cfg_debug ) var_dump( $ret_val );
+      if ( $ret_stat != 200 ) goto print_and_exit;
+      if ( (@$ret_val['type'] !== $create_val['type']) || (@$ret_val['updated'] !== $create_val['updated']) || (@$ret_val['descr'] !== $create_val['descr']) ||
+           (isset($create_val['pubkey']) && (@$ret_val['pubkey'] !== $create_val['pubkey'])) ) {
+        echo "ERROR: derive $item ($type_ecdh) derive/get mismatch: " . json_encode($create_val) . " vs " . json_encode($ret_val) . "
+";
+        goto print_and_exit;
+      }
+    }
     else if ( $ret_stat == 406 ) $failed_calls[$item."-from-".$type_ecdh] = 406; 
     else {
       echo "DERIVE FAILED: $ret_stat";
@@ -389,6 +440,51 @@ foreach($keychain2 as $item) {
 if ($key_data2 == false) goto print_and_exit;                     // ECDH key not found
 if ($key_data['updated'] == $key_data2['updated']) goto print_and_exit;   // key not updated - by timpstamp
 if ($key_data['label'] == $key_data2['label']) goto print_and_exit;   // key not updated - by label
+// h) DEV-424: label up to 64 chars and descr up to 128 bytes are accepted and stored as sent
+$label_max = str_pad(substr($label_new, 0, 64), 64, "#");
+$descr_max = base64_encode(str_pad(substr(base64_decode($key_data['descr']), 0, 128), 128, "#"));   // keeps the "CCTEST:" prefix
+$post_array = array('label' => $label_max, 'kid' => $kid, 'descr' => $descr_max);
+$ret_val = false;
+$post_data = json_encode($post_array);    
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/update", $ret_val, $post_data, $token_keyupd);
+if ( $cfg_debug ) var_dump( $ret_val );
+if ( $ret_stat != 200 ) goto print_and_exit;                // expected is 200 (OK)
+$keychain3 = array();
+$offset = 0;
+do {
+  $ret_val = false;
+  $dummy_val = false;
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/list/$offset", $ret_val, $dummy_val, $token_keylist);
+  if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
+  $total = $ret_val['total'];
+  $listed = $ret_val['listed'];
+  foreach($ret_val['list'] as $item) $keychain3[] = $item; 
+  $offset = $offset + $listed;
+  if ($offset >= $total) break;   
+} while(true);
+$key_data3 = false;
+foreach($keychain3 as $item) {
+  if ($item['kid'] === $kid) {
+    $key_data3 = $item;
+    break;
+  }
+}
+if ($key_data3 == false) goto print_and_exit;                     // key not found
+if ( ($key_data3['label'] !== $label_max) || ($key_data3['descr'] !== $descr_max) ) {
+  echo "ERROR: DEV-424 max label/descr not stored as sent: " . json_encode($key_data3) . "\n";
+  goto print_and_exit;
+}
+// i) DEV-424: one over the limit is rejected
+$post_array = array('label' => $label_max . "#", 'kid' => $kid);                                   // label 65 chars
+$ret_val = false;
+$post_data = json_encode($post_array);    
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/update", $ret_val, $post_data, $token_keyupd);
+if ( $ret_stat != 400 ) goto print_and_exit;                // expected is 400 (Bad Request)
+$post_array = array('label' => $label_max, 'kid' => $kid, 'descr' => base64_encode(base64_decode($descr_max) . "#"));   // descr 129 bytes
+$ret_val = false;
+$post_data = json_encode($post_array);    
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/update", $ret_val, $post_data, $token_keyupd);
+if ( $ret_stat != 400 ) goto print_and_exit;                // expected is 400 (Bad Request)
 // e) set result
 $test_cfg['subtests'][3] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
