@@ -63,7 +63,8 @@ if ( !isset($toe_status['https']) ) goto print_and_exit;  // exit if HTTPS (TLS)
 
 // b) 
 $time_start = microtime(true);
-$count = 1000;
+$probe_size = 100;
+$count = $probe_size;
 while($count--) {
   $ret_val = false;
   $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/version", $ret_val);
@@ -71,7 +72,7 @@ while($count--) {
   if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
 }
 $time_stop = microtime(true);
-$time = $time_stop - $time_start;
+$time = sprintf("%0.3f",  ($time_stop - $time_start) / $probe_size);
 
 echo "Time elapsed on HTTPS perfromance test: $time seconds\n";
 

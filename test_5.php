@@ -86,7 +86,7 @@ if ( $ret_stat != 200 ) goto print_and_exit;
 $rid = $ret_val['rid'];
 $qr_link = $ret_val['link'];
 // i) generate QR code and show it - ready to scan
-$hash = 'not_implemented_yet';
+$hash = base64_encode( hash('sha256', $auth_challange['request'], true) );   // base64(SHA-256(request)) - checked by authenticator v2
 $qr_data = array( 'link' => $qr_link, 'hash' => $hash, 'user' => $encedo_config['user'], 'email' => $encedo_config['email'], 'hostname' => $encedo_config['hostname']);
 $qr_body = json_encode( $qr_data );
 $google_gen_qr_link = "https://quickchart.io/qr?size=500&text=" . urlencode( $qr_body );

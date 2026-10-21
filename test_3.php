@@ -410,10 +410,11 @@ if ( $ret_stat != 200 ) goto print_and_exit;               // expected 200 if al
 // c) wait until teh token expire
 $token_parts = explode(".", $user_auth_token);
 $token_details = json_decode(base64_decode($token_parts[1]), true);
+//var_dump($token_details);
 //echo "Local time: " . date("H:i:s") . "\n";
 //echo " Token IAT: " . date("H:i:s ", $token_details['iat']) . "\n";
 //echo " Token EXP: " . date("H:i:s", $token_details['exp']) . "\n";
-$slp = $token_details['exp'] - time();
+$slp = $token_details['exp'] - $token_details['iat'];
 //echo " sleep for: $slp sec\n";
 sleep($slp + 3);
 //echo "Local time: " . date("H:i:s") . "\n";
