@@ -126,8 +126,8 @@ foreach($support_key_types as $item => $args) {
     echo "ERROR: $item return_pubkey=" . ($ret_pub ? "true" : "false") . ", pubkey " . (isset($ret_val['pubkey']) ? "present" : "missing") . "\n";
     goto print_and_exit;
   }
-  // DEV-435: create returns the key attributes (type, updated, descr)
-  if ( (@$ret_val['type'] !== $item) || !isset($ret_val['updated']) || (@$ret_val['descr'] !== $descr) ) {
+  // DEV-435, DEV-449: create returns the list record (kid, created, type with flags, label, descr, updated)
+  if ( (substr(strrchr(',' . @$ret_val['type'], ','), 1) !== $item) || (@$ret_val['label'] !== $label) || (@$ret_val['descr'] !== $descr) || !isset($ret_val['created']) || (@$ret_val['created'] !== @$ret_val['updated']) ) {
     echo "ERROR: $item create reply attributes: " . json_encode($ret_val) . "\n";
     goto print_and_exit;
   }
@@ -138,7 +138,7 @@ foreach($support_key_types as $item => $args) {
   $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/$kid", $ret_val, $dummy_val, $token_keygen);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;
-  if ( (@$ret_val['type'] !== $create_val['type']) || (@$ret_val['updated'] !== $create_val['updated']) || (@$ret_val['descr'] !== $create_val['descr']) ||
+  if ( isset($ret_val['kid']) || (@$ret_val['type'] !== $create_val['type']) || (@$ret_val['created'] !== $create_val['created']) || (@$ret_val['updated'] !== $create_val['updated']) || (@$ret_val['label'] !== $create_val['label']) || (@$ret_val['descr'] !== $create_val['descr']) ||
        (isset($create_val['pubkey']) && (@$ret_val['pubkey'] !== $create_val['pubkey'])) ) {
     echo "ERROR: $item create/get mismatch: " . json_encode($create_val) . " vs " . json_encode($ret_val) . "\n";
     goto print_and_exit;
@@ -205,11 +205,11 @@ foreach($ecdh_kids as $kid_ecdh => $type_ecdh) {
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( $ret_stat == 200 ) {
       $created++; 
-      // DEV-421 + DEV-435: same reply rules as create
+      // DEV-421, DEV-435, DEV-449: same reply rules as create
       $kid = $ret_val['kid'];
       $is_asym = (preg_match('/^(SECP|CURVE|ED|MLKEM|MLDSA)/', $item) == 1);
       if ( (isset($ret_val['pubkey']) != ($ret_pub && $is_asym)) ||
-           (@$ret_val['type'] !== $item) || !isset($ret_val['updated']) || (@$ret_val['descr'] !== $descr) ) {
+           (substr(strrchr(',' . @$ret_val['type'], ','), 1) !== $item) || (@$ret_val['label'] !== $label) || (@$ret_val['descr'] !== $descr) || !isset($ret_val['created']) || (@$ret_val['created'] !== @$ret_val['updated']) ) {
         echo "ERROR: derive $item ($type_ecdh) reply: " . json_encode($ret_val) . "
 ";
         goto print_and_exit;
@@ -220,7 +220,7 @@ foreach($ecdh_kids as $kid_ecdh => $type_ecdh) {
       $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/$kid", $ret_val, $dummy_val, $token_keygen);
       if ( $cfg_debug ) var_dump( $ret_val );
       if ( $ret_stat != 200 ) goto print_and_exit;
-      if ( (@$ret_val['type'] !== $create_val['type']) || (@$ret_val['updated'] !== $create_val['updated']) || (@$ret_val['descr'] !== $create_val['descr']) ||
+      if ( isset($ret_val['kid']) || (@$ret_val['type'] !== $create_val['type']) || (@$ret_val['created'] !== $create_val['created']) || (@$ret_val['updated'] !== $create_val['updated']) || (@$ret_val['label'] !== $create_val['label']) || (@$ret_val['descr'] !== $create_val['descr']) ||
            (isset($create_val['pubkey']) && (@$ret_val['pubkey'] !== $create_val['pubkey'])) ) {
         echo "ERROR: derive $item ($type_ecdh) derive/get mismatch: " . json_encode($create_val) . " vs " . json_encode($ret_val) . "
 ";
