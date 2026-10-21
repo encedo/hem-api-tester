@@ -1,0 +1,5 @@
+# Windows curl binaries (curl.exe, libcurl, CA bundle) - local tools, not part of the tests
+/bin/
+
+# test output (T-8 entropy samples etc.)
+/out/
