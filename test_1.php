@@ -7,7 +7,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-1";
 $test_descr = "Check TOE basic functions";
-$test_subtest_cnt = 5;
+$test_subtest_cnt = 6;
 
 
 // initialize the execution env
@@ -160,6 +160,78 @@ if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 413 ) goto print_and_exit;               // expected 400 - "Bad Request"
 // c) set result
 $test_cfg['subtests'][5] = 'OK';                           // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 6        ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST6:
+echo "  subtest-6\n";
+$test_cfg['subtests'][6] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) security headers on an API response (DEV-426): nosniff, no-store, no Server/X-Powered-By, X-Request-ID echoed
+$req_id = "t1-6-" . bin2hex( openssl_random_pseudo_bytes( 4 ) );
+$hdrs = false;
+$ret_stat = raw_https_request($cfg_domain, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nX-Request-ID: $req_id\r\nConnection: close\r\n\r\n", $hdrs);
+if ( $cfg_debug ) var_dump( $hdrs );
+if ( $ret_stat != 200 ) goto print_and_exit;               // exit on API call FAIL
+if ( @$hdrs['x-content-type-options'] !== "nosniff" ) goto print_and_exit;
+if ( strpos(@$hdrs['cache-control'], "no-store") === false ) goto print_and_exit;
+if ( isset($hdrs['server']) || isset($hdrs['x-powered-by']) ) goto print_and_exit;   // FW version must not leak
+if ( @$hdrs['x-request-id'] !== $req_id ) goto print_and_exit;
+// b) 401 carries WWW-Authenticate: Bearer (DEV-426)
+$hdrs = false;
+$ret_stat = raw_https_request($cfg_domain, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nAuthorization: Bearer junk\r\nConnection: close\r\n\r\n", $hdrs);
+if ( $cfg_debug ) var_dump( $hdrs );
+if ( $ret_stat != 401 ) goto print_and_exit;               // expected 401 - invalid token
+if ( strpos(@$hdrs['www-authenticate'], "Bearer") !== 0 ) goto print_and_exit;
+// c) header names are case-insensitive (DEV-430): lowercase 'authorization' must be seen as a token (was ignored - 200)
+$ret_stat = raw_https_request($cfg_domain, "GET /api/system/status HTTP/1.1\r\nhost: $cfg_domain\r\nauthorization: Bearer junk\r\nconnection: close\r\n\r\n");
+if ( $ret_stat != 401 ) goto print_and_exit;               // expected 401 - invalid token
+// d) lowercase 'content-type'/'content-length' on POST (DEV-430): malformed JSON must reach the API (was 411)
+$post_data = '{"checked":"somedata"';                       // malformated JSON string - missing closing '}', as in subtest 5
+$ret_stat = raw_https_request($cfg_domain, "POST /api/system/checkin HTTP/1.1\r\nhost: $cfg_domain\r\ncontent-type: application/json\r\ncontent-length: " . strlen($post_data) . "\r\nconnection: close\r\n\r\n" . $post_data);
+if ( $ret_stat != 400 ) goto print_and_exit;               // expected 400 - "Bad Request" (JSON parsed and rejected)
+// e) Content-Length that is not a number (DEV-430)
+$ret_stat = raw_https_request($cfg_domain, "POST /api/system/checkin HTTP/1.1\r\nHost: $cfg_domain\r\nContent-Type: application/json\r\nContent-Length: " . strlen($post_data) . "abc\r\nConnection: close\r\n\r\n" . $post_data);
+if ( $ret_stat != 400 ) goto print_and_exit;               // expected 400 - "Bad Request"
+// f) CORS preflight with Private Network Access request (DEV-426); TOE config 'origin' is "*" after T-2
+$origin = "https://hem-api-tester.encedo.com";
+$hdrs = false;
+$ret_stat = raw_https_request($cfg_domain, "OPTIONS /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nOrigin: $origin\r\nAccess-Control-Request-Method: POST\r\nAccess-Control-Request-Headers: content-type,authorization\r\nAccess-Control-Request-Private-Network: true\r\nConnection: close\r\n\r\n", $hdrs);
+if ( $cfg_debug ) var_dump( $hdrs );
+if ( $ret_stat != 204 ) goto print_and_exit;               // expected 204 - preflight accepted
+if ( @$hdrs['access-control-allow-origin'] !== $origin ) goto print_and_exit;   // exact origin echoed, never "*"
+if ( strpos(@$hdrs['vary'], "Origin") === false ) goto print_and_exit;
+if ( isset($hdrs['access-control-allow-credentials']) ) goto print_and_exit;   // Bearer token API, no cookies
+if ( strpos(@$hdrs['access-control-allow-methods'], "POST") === false ) goto print_and_exit;
+if ( stripos(@$hdrs['access-control-allow-headers'], "Authorization") === false ) goto print_and_exit;
+if ( @$hdrs['x-content-type-options'] !== "nosniff" ) goto print_and_exit;
+if ( $test_cfg['conf'] == "ENCEDO PPA" ) {
+  if ( @$hdrs['access-control-allow-private-network'] !== "true" ) goto print_and_exit;   // PNA only on PPA (local device)
+  if ( @$hdrs['private-network-access-name'] !== "encedo-ppa" ) goto print_and_exit;
+} else {
+  if ( isset($hdrs['access-control-allow-private-network']) ) goto print_and_exit;     // never on EPA
+}
+// g) preflight without the PNA request header - no PNA answer
+$hdrs = false;
+$ret_stat = raw_https_request($cfg_domain, "OPTIONS /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nOrigin: $origin\r\nAccess-Control-Request-Method: GET\r\nConnection: close\r\n\r\n", $hdrs);
+if ( $cfg_debug ) var_dump( $hdrs );
+if ( $ret_stat != 204 ) goto print_and_exit;
+if ( isset($hdrs['access-control-allow-private-network']) ) goto print_and_exit;     // only when asked
+// h) keep-alive (DEV-430): two requests on one connection
+$sock = raw_https_connect($cfg_domain);
+if ( $sock == false ) goto print_and_exit;
+$hdrs = false;
+$ret_stat = raw_https_transaction($sock, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nConnection: keep-alive\r\n\r\n", $hdrs);
+if ( ($ret_stat != 200) || (strcasecmp(@$hdrs['connection'], "keep-alive") != 0) ) { fclose($sock); goto print_and_exit; }
+$ret_stat = raw_https_transaction($sock, "GET /api/system/version HTTP/1.1\r\nHost: $cfg_domain\r\nConnection: close\r\n\r\n");
+fclose($sock);
+if ( $ret_stat != 200 ) goto print_and_exit;               // second request on the same connection must be served
+// i) set result
+$test_cfg['subtests'][6] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////

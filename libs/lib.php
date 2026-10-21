@@ -36,7 +36,7 @@ function init_env() {
 	}
 
 	// parse env argument
-	if (isset($argv[1]) && ($argv[1] == "epa")) {
+	if (isset($argv[1]) && (strtolower($argv[1]) == "epa")) {
     $cfg_domain =  "c$cfg_epa_chipid.$cfg_epa_domain";
     $cfg_enforce_ppa_domain = 0;
 	}
@@ -403,3 +403,58 @@ function encedo_log_integrity_check($pubkey, $log_array, &$output_log){
   return true;  //all process, no errors found
 }
 
+
+
+// raw HTTP over TLS - the request is sent exactly as given (header name case, Content-Length value),
+// for checks http_transaction() cannot do: lowercase header names (DEV-430), keep-alive (two requests on
+// one connection), CORS/PNA preflight and response headers (DEV-426)
+function raw_https_connect($domain) {
+  $context = stream_context_create([
+    'ssl' => [
+      'verify_peer' => true,         //validate peer and name - in short: validates cert trust
+      'verify_peer_name' => true,    //
+      'crypto_method' => STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT,
+    ],
+  ]);
+  $sock = @stream_socket_client("ssl://$domain:443", $errorNumber, $errorDescription, 20, STREAM_CLIENT_CONNECT, $context);
+  if ($sock == false) return false;
+  stream_set_timeout($sock, 10);
+  return $sock;
+}
+
+// send one raw request on an open connection; returns the HTTP status or false (connection closed / timeout)
+// $hdrs gets the response headers with lowercase names (header names are case-insensitive)
+function raw_https_transaction($sock, $request, &$hdrs = false, &$body = false) {
+  if ($sock == false) return false;
+  if (fwrite($sock, $request) === false) return false;
+  $head = "";
+  while (strpos($head, "\r\n\r\n") === false) {
+    $chunk = fread($sock, 1);
+    if (($chunk === false) || ($chunk === "")) return false;
+    $head = $head . $chunk;
+  }
+  $lines = explode("\r\n", trim($head));
+  if ( !preg_match("#^HTTP/[0-9\.]+\s+([0-9]+)#", $lines[0], $out) ) return false;
+  $hdrs = array();
+  foreach(array_slice($lines, 1) as $line) {
+    $t = explode(':', $line, 2);
+    if ( isset($t[1]) ) $hdrs[ strtolower(trim($t[0])) ] = trim($t[1]);
+  }
+  $body = "";
+  $len = isset($hdrs['content-length']) ? intval($hdrs['content-length']) : 0;
+  while (strlen($body) < $len) {
+    $chunk = fread($sock, $len - strlen($body));
+    if (($chunk === false) || ($chunk === "")) return false;
+    $body = $body . $chunk;
+  }
+  return intval($out[1]);
+}
+
+// one raw request on its own connection
+function raw_https_request($domain, $request, &$hdrs = false, &$body = false) {
+  $sock = raw_https_connect($domain);
+  if ($sock == false) return false;
+  $ret = raw_https_transaction($sock, $request, $hdrs, $body);
+  fclose($sock);
+  return $ret;
+}
