@@ -582,6 +582,39 @@ foreach($keychain as $item) {
     //all good, got secret (ECDH result) hashed by ALG 
     $counter++;    
   } 
+  // DEV-427: ECDH with HKDF - result must equal HKDF over the raw ECDH secret (hkdf_salt, hkdf_ctx = HKDF info, hkdf_len)
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, json_encode(array('kid' => $kid, 'pubkey' => $pubkey)), $token);
+  if ( $ret_stat != 200 ) goto print_and_exit;                // raw ECDH secret
+  $z = base64_decode($ret_val['ecdh']);
+  $hkdf_salt = openssl_random_pseudo_bytes(16);
+  $hkdf_ctx = openssl_random_pseudo_bytes(12);
+  foreach (array("HKDF-SHA2-256" => "sha256", "HKDF-SHA2-384" => "sha384", "HKDF-SHA2-512" => "sha512") as $alg => $php_alg) {
+    foreach (array(0, 16, 33, 128) as $hkdf_len) {             // 0: default length = digest size
+      $post_array = array('kid' => $kid, 'pubkey' => $pubkey, 'alg' => $alg, 'hkdf_salt' => base64_encode($hkdf_salt), 'hkdf_ctx' => base64_encode($hkdf_ctx));
+      if ($hkdf_len) $post_array['hkdf_len'] = $hkdf_len;
+      $ret_val = false;
+      $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, json_encode($post_array), $token);
+      if ( $ret_stat != 200 ) { echo "ERROR: ECDH $type $alg hkdf_len $hkdf_len: HTTP $ret_stat\n"; goto print_and_exit; }
+      $expected = hash_hkdf($php_alg, $z, $hkdf_len ? $hkdf_len : 0, $hkdf_ctx, $hkdf_salt);
+      if ( base64_decode($ret_val['ecdh']) !== $expected ) { echo "ERROR: ECDH $type $alg hkdf_len $hkdf_len: result differs from local HKDF\n"; goto print_and_exit; }
+    }
+  }
+  // without salt and context
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, json_encode(array('kid' => $kid, 'pubkey' => $pubkey, 'alg' => "HKDF-SHA2-256")), $token);
+  if ( ($ret_stat != 200) || (base64_decode($ret_val['ecdh']) !== hash_hkdf('sha256', $z, 0, '', '')) ) { echo "ERROR: ECDH $type HKDF without salt/ctx\n"; goto print_and_exit; }
+  // limits: hkdf_len 16..128, hkdf_salt and hkdf_ctx up to 128 B
+  $limits = array( array('hkdf_len' => 15), array('hkdf_len' => 129),
+                   array('hkdf_salt' => base64_encode(str_repeat("s", 129))), array('hkdf_ctx' => base64_encode(str_repeat("c", 129))) );
+  foreach ($limits as $bad) {
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, json_encode(array('kid' => $kid, 'pubkey' => $pubkey, 'alg' => "HKDF-SHA2-256") + $bad), $token);
+    if ( $ret_stat != 400 ) { echo "ERROR: ECDH $type " . json_encode(array_keys($bad)) . " over the limit: HTTP $ret_stat (expected 400)\n"; goto print_and_exit; }
+  }
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, json_encode(array('kid' => $kid, 'pubkey' => $pubkey, 'alg' => "HKDF-SHA2-256", 'hkdf_salt' => base64_encode(str_repeat("s", 128)), 'hkdf_ctx' => base64_encode(str_repeat("c", 128)))), $token);
+  if ( ($ret_stat != 200) || (base64_decode($ret_val['ecdh']) !== hash_hkdf('sha256', $z, 0, str_repeat("c", 128), str_repeat("s", 128))) ) { echo "ERROR: ECDH $type HKDF with 128 B salt/ctx\n"; goto print_and_exit; }
   //additional tests - ECDH as a source of secrets for hmac,encryption&wrap
   //reuse code from subtest1,3&4
   //echo "HMAC - EXT_KID\n";  
