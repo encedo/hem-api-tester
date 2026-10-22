@@ -179,17 +179,14 @@ $support_key_types_ecdh = array(  "SECP256R1"  => "AiYzWmnH7Kduz57RYNfUPcb6cla/z
 //derive keys    
 $created = 0;
 $failed_calls = array();  
-//Some API call fail with 406 if the ECDH secret key is to small to be an input to generate a final key.
-//e.g. ECDH on CURVE25519 is 32bytes, to small to gen e.g. SHA2-384 where 48bytes is required!
-//     Also APi will fail is KID is duplicated. It is possible as for the same input ECDH data, SHA2-256 
-//     and SHA3-256 (or AES256) will have the same key material! It is a RAW ECDH without any context.
+//DEV-428/429: the whole ECDH shared secret is the HKDF-SHA512 input and every target type has its own context,
+//so every pair derives (200); a 406 here is an error. Same input again gives the same key, i.e. a duplicate (406), see k).
 foreach($ecdh_kids as $kid_ecdh => $type_ecdh) {
   foreach($support_key_types as $item => $args) {
     if (isset($args['not_deriveable']) )  //skip PQC key type
         continue;
     unset($keycreate_arg);
     $label = "T-10.1 DER $item ($type_ecdh)";
-    $label = substr($label, 0, 31);     //truncate key label to fit in limit
     $descr = base64_encode( "CCTEST:T-10.1_".$item."_".$type_ecdh );
     $pubkey = $support_key_types_ecdh[$type_ecdh];
     $keycreate_arg = array('label' => $label, 'type' => $item, 'descr' => $descr, 'kid' => $kid_ecdh, 'pubkey' => $pubkey);
@@ -210,8 +207,7 @@ foreach($ecdh_kids as $kid_ecdh => $type_ecdh) {
       $is_asym = (preg_match('/^(SECP|CURVE|ED|MLKEM|MLDSA)/', $item) == 1);
       if ( (isset($ret_val['pubkey']) != ($ret_pub && $is_asym)) ||
            (substr(strrchr(',' . @$ret_val['type'], ','), 1) !== $item) || (@$ret_val['label'] !== $label) || (@$ret_val['descr'] !== $descr) || !isset($ret_val['created']) || (@$ret_val['created'] !== @$ret_val['updated']) ) {
-        echo "ERROR: derive $item ($type_ecdh) reply: " . json_encode($ret_val) . "
-";
+        echo "ERROR: derive $item ($type_ecdh) reply: " . json_encode($ret_val) . "\n";
         goto print_and_exit;
       }
       $create_val = $ret_val;
@@ -222,15 +218,13 @@ foreach($ecdh_kids as $kid_ecdh => $type_ecdh) {
       if ( $ret_stat != 200 ) goto print_and_exit;
       if ( isset($ret_val['kid']) || (@$ret_val['type'] !== $create_val['type']) || (@$ret_val['created'] !== $create_val['created']) || (@$ret_val['updated'] !== $create_val['updated']) || (@$ret_val['label'] !== $create_val['label']) || (@$ret_val['descr'] !== $create_val['descr']) ||
            (isset($create_val['pubkey']) && (@$ret_val['pubkey'] !== $create_val['pubkey'])) ) {
-        echo "ERROR: derive $item ($type_ecdh) derive/get mismatch: " . json_encode($create_val) . " vs " . json_encode($ret_val) . "
-";
+        echo "ERROR: derive $item ($type_ecdh) derive/get mismatch: " . json_encode($create_val) . " vs " . json_encode($ret_val) . "\n";
         goto print_and_exit;
       }
     }
-    else if ( $ret_stat == 406 ) $failed_calls[$item."-from-".$type_ecdh] = 406; 
     else {
-      echo "DERIVE FAILED: $ret_stat";
-      break;    // this is so unexpected!   
+      echo "ERROR: derive $item from $type_ecdh: HTTP $ret_stat, expected 200\n";   // DEV-428/429
+      goto print_and_exit;
     }
   }
 }
@@ -257,6 +251,45 @@ $y = count($keychain3);
 //echo "count(kc2): $x  count(kc3): $y  created: $created";
 // h)
 if (count($keychain2) + $created != count($keychain3)) goto print_and_exit; // expected is to have more kesy in a keychain
+// k) DEV-428/429, C5, DEV-424: derive options on the SECP256R1 ECDH key from f)
+$kid_p256 = array_search("SECP256R1", $ecdh_kids);
+$pub_p256 = $support_key_types_ecdh["SECP256R1"];
+$pub_x25519 = $support_key_types_ecdh["CURVE25519"];
+$salt = base64_encode(openssl_random_pseudo_bytes(16));
+$salt2 = base64_encode(openssl_random_pseudo_bytes(16));            // label cases: own salt, otherwise the same key as in i)
+// ED25519 main key with mode ECDH (new in 1.3.0: converted to X25519 for ECDH)
+$post_data = json_encode(array('label' => "T-10.1 GEN ED25519 ECDH", 'type' => "ED25519", 'mode' => "ECDH", 'descr' => base64_encode("CCTEST:T-10.1_ED25519_ECDH")));
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_keygen);
+if ( $cfg_debug ) var_dump( $ret_val );
+if ( $ret_stat != 200 ) goto print_and_exit;                // expected is 200 (OK)
+$kid_ed = $ret_val['kid'];
+$derive_cases = array(      // name, request fields, expected HTTP status
+  array("no salt",          array('type' => "SECP256R1", 'pubkey' => $pub_p256), 406),                       // same input as i) - deterministic, duplicate
+  array("salt",             array('type' => "SECP256R1", 'pubkey' => $pub_p256, 'hkdf_salt' => $salt), 200), // salt changes the key
+  array("salt again",       array('type' => "SECP256R1", 'pubkey' => $pub_p256, 'hkdf_salt' => $salt), 406), // deterministic with salt
+  array("ext_kid",          array('type' => "AES256", 'ext_kid' => $kid_p256), 200),                         // peer key from the repo
+  array("ED25519 main",     array('kid' => $kid_ed, 'type' => "AES256", 'pubkey' => $pub_x25519), 200),
+  array("ED25519 ext_kid",  array('kid' => $kid_ed, 'type' => "AES128", 'ext_kid' => array_search("CURVE25519", $ecdh_kids)), 200),
+  array("ML-KEM type",      array('type' => "MLKEM512", 'pubkey' => $pub_p256), 400),                        // C5
+  array("unknown type",     array('type' => "AES512", 'pubkey' => $pub_p256), 400),                          // C5
+  array("salt 129 B",       array('type' => "AES128", 'pubkey' => $pub_p256, 'hkdf_salt' => base64_encode(str_repeat("s", 129))), 400),
+  array("salt not base64",  array('type' => "AES128", 'pubkey' => $pub_p256, 'hkdf_salt' => "***"), 400),
+  array("pubkey 65 B",      array('type' => "AES128", 'pubkey' => base64_encode("\x04" . str_repeat("\x01", 64))), 406),  // NIST: compressed only
+  array("label 64",         array('type' => "SHA2-512", 'pubkey' => $pub_p256, 'hkdf_salt' => $salt2, 'label' => str_repeat("L", 64)), 200),     // DEV-424
+  array("label 65",         array('type' => "SHA3-512", 'pubkey' => $pub_p256, 'hkdf_salt' => $salt2, 'label' => str_repeat("L", 65)), 400),
+);
+foreach ($derive_cases as $case) {
+  $keycreate_arg = array_merge(array('kid' => $kid_p256, 'label' => "T-10.1 DER opt " . $case[0], 'descr' => base64_encode("CCTEST:T-10.1_derive_" . $case[0])), $case[1]);
+  $ret_val = false;
+  $post_data = json_encode($keycreate_arg);
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/derive", $ret_val, $post_data, $token_keygen);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != $case[2] ) {
+    echo "ERROR: derive '{$case[0]}': HTTP $ret_stat, expected {$case[2]}\n";
+    goto print_and_exit;
+  }
+}
 // f) set result
 $test_cfg['subtests'][1] = 'OK';                              // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
