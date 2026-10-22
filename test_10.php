@@ -349,6 +349,7 @@ $keys_to_import = array( "SECP256R1"  => "AmWHMI2mU68VmObAhUC06wuRksr/Z36l3vvASX
 // NOTE Re-running this subtest may fail IF those keys are already in the keychain. Deduplication will trigger an error.
 $imported = 0;
 $failed_calls = array();  
+$imported_nist = array();                                   // DEV-434: kid of every imported NIST key
 foreach($keys_to_import as $type => $pubkey) {
   unset($keycreate_arg);
   $label = "T-10.2 IMP $type";
@@ -359,11 +360,26 @@ foreach($keys_to_import as $type => $pubkey) {
   $post_data = json_encode($keycreate_arg);    
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/import", $ret_val, $post_data, $token_keyimp);
   if ( $cfg_debug ) var_dump( $ret_val );
-  if ( $ret_stat == 200 ) $imported++; 
+  if ( $ret_stat == 200 ) { $imported++; if (strpos($type, "SECP") === 0) $imported_nist[$type] = $ret_val['kid']; }
   else if ( $ret_stat == 406 ) $failed_calls[$type] = 406; 
   else break;    // this is so unexpected!   
 }
 if ( ($ret_stat != 200) && ($ret_stat != 406)) goto print_and_exit;
+// DEV-434: imported NIST public keys (compressed, prefix 02 and 03) are read back unchanged - point parity kept
+if (!empty($imported_nist)) {
+  $token_keyget = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:get");
+  if ($token_keyget == false) goto print_and_exit;          // exit on error
+  foreach ($imported_nist as $type => $kid) {
+    $ret_val = false;
+    $dummy_val = false;
+    $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/$kid", $ret_val, $dummy_val, $token_keyget);
+    if ( $ret_stat != 200 ) goto print_and_exit;
+    if ( @$ret_val['pubkey'] !== $keys_to_import[$type] ) {
+      echo "ERROR: $type imported pubkey " . $keys_to_import[$type] . ", read back " . @$ret_val['pubkey'] . "\n";
+      goto print_and_exit;
+    }
+  }
+}
 //e) get new listing of all keys stored in the key repository
 $keychain2 = array();
 $offset = 0;
