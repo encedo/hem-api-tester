@@ -544,6 +544,19 @@ $test_cfg['subtests'][3] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 4        ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+// DEV-420: keymgmt/search with all result pages (15 records per page); returns the list of keys or the HTTP status on error
+function t10_search($domain, $token, $args) {
+  $all = array();
+  $offset = 0;
+  do {
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $domain, "/api/keymgmt/search", $ret_val, json_encode($args + array('offset' => $offset)), $token);
+    if ( $ret_stat != 200 ) return $ret_stat;
+    foreach ($ret_val['list'] as $item) $all[] = $item;
+    $offset += $ret_val['listed'];
+  } while ( $ret_val['listed'] == 15 );
+  return $all;
+}
 TEST4:
 echo "  subtest-4\n";
 $test_cfg['subtests'][4] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
@@ -555,6 +568,54 @@ $post_data = json_encode( $post_array );
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/search", $ret_val, $post_data);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;    //200 if found, 404 if not
+// DEV-420: filters by type and mode, return_pubkey, pattern limits; the keys come from subtest 1 (descr "CCTEST:T-10.1_<type>[_<main type>]")
+$token_keylist = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");
+if ($token_keylist == false) goto print_and_exit;           // exit on error
+$t10_prefix = "^" . base64_encode("CCTEST:T-10.1_");
+// b) type filter: only the requested type; SHA2-256 must not return SECP384R1 (C1: ids 10-13 shared by ECC and HMAC)
+foreach (array("SHA2-256" => "SECP384R1", "SECP256R1" => "SHA2-256", "SECP384R1" => "SHA2-256") as $type => $other) {
+  $list = t10_search($cfg_domain, $token_keylist, array('descr' => $t10_prefix, 'type' => $type));
+  if ( !is_array($list) || (count($list) == 0) ) { echo "ERROR: search type $type: " . json_encode($list) . "\n"; goto print_and_exit; }
+  foreach ($list as $item) {
+    if ( substr(strrchr(',' . $item['type'], ','), 1) !== $type ) { echo "ERROR: search type $type returned " . $item['type'] . "\n"; goto print_and_exit; }
+  }
+}
+// c) unknown type and unknown mode: 400
+if ( t10_search($cfg_domain, $token_keylist, array('descr' => $t10_prefix, 'type' => "XYZ")) !== 400 ) goto print_and_exit;
+if ( t10_search($cfg_domain, $token_keylist, array('descr' => $t10_prefix, 'mode' => "SIGN")) !== 400 ) goto print_and_exit;
+// d) mode filter: every returned key has all requested modes
+foreach (array("ECDH" => array("ECDH"), "ExDSA" => array("ExDSA"), "ECDH,ExDSA" => array("ECDH", "ExDSA")) as $mode => $flags) {
+  $list = t10_search($cfg_domain, $token_keylist, array('descr' => $t10_prefix, 'mode' => $mode));
+  if ( !is_array($list) || (count($list) == 0) ) { echo "ERROR: search mode $mode: " . json_encode($list) . "\n"; goto print_and_exit; }
+  foreach ($list as $item) {
+    $item_flags = explode(',', $item['type']);
+    foreach ($flags as $f) if ( !in_array($f, $item_flags) ) { echo "ERROR: search mode $mode returned " . $item['type'] . "\n"; goto print_and_exit; }
+  }
+}
+// e) return_pubkey: public key for asymmetric keys, none for symmetric ones
+$list = t10_search($cfg_domain, $token_keylist, array('descr' => "^" . base64_encode("CCTEST:T-10.1_SECP256R1"), 'type' => "SECP256R1", 'return_pubkey' => true));
+if ( !is_array($list) || (count($list) == 0) ) goto print_and_exit;
+foreach ($list as $item) if ( !isset($item['pubkey']) ) { echo "ERROR: search return_pubkey: no pubkey for " . $item['kid'] . "\n"; goto print_and_exit; }
+$list = t10_search($cfg_domain, $token_keylist, array('descr' => "^" . base64_encode("CCTEST:T-10.1_AES256"), 'type' => "AES256", 'return_pubkey' => true));
+if ( !is_array($list) || (count($list) == 0) ) goto print_and_exit;
+foreach ($list as $item) if ( isset($item['pubkey']) ) { echo "ERROR: search return_pubkey: pubkey for AES256\n"; goto print_and_exit; }
+// f) prefix (^) and suffix ($) match the decoded descr
+$list = t10_search($cfg_domain, $token_keylist, array('descr' => base64_encode("_SHA3-512") . "\$"));
+if ( !is_array($list) || (count($list) == 0) ) goto print_and_exit;
+foreach ($list as $item) {
+  if ( substr(base64_decode($item['descr']), -strlen("_SHA3-512")) !== "_SHA3-512" ) { echo "ERROR: suffix search returned " . base64_decode($item['descr']) . "\n"; goto print_and_exit; }
+}
+$list = t10_search($cfg_domain, $token_keylist, array('descr' => "^" . base64_encode("CCTEST:T-10.1_ED448")));
+if ( !is_array($list) || (count($list) == 0) ) goto print_and_exit;
+foreach ($list as $item) {
+  if ( strpos(base64_decode($item['descr']), "CCTEST:T-10.1_ED448") !== 0 ) { echo "ERROR: prefix search returned " . base64_decode($item['descr']) . "\n"; goto print_and_exit; }
+}
+// g) pattern limits (C3): empty, "^" or "$" alone -> 400; decoded pattern longer than 128 B -> 406, 128 B -> 200
+foreach (array("", "^", "\$") as $descr) {
+  if ( t10_search($cfg_domain, $token_keylist, array('descr' => $descr)) !== 400 ) { echo "ERROR: search descr \"$descr\" not rejected\n"; goto print_and_exit; }
+}
+if ( t10_search($cfg_domain, $token_keylist, array('descr' => "^" . base64_encode(str_repeat("A", 129)))) !== 406 ) goto print_and_exit;
+if ( !is_array(t10_search($cfg_domain, $token_keylist, array('descr' => "^" . base64_encode(str_repeat("A", 128))))) ) goto print_and_exit;
 // e) set result
 $test_cfg['subtests'][4] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
