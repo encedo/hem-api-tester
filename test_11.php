@@ -737,6 +737,40 @@ foreach($keychain as $item) {
   if ($msg != $msg_test) goto print_and_exit;    //expected is equal  
 }
 if ($counter != count($supported_alg)*count($keychain)) goto print_and_exit;
+// DEV-422: ED25519 dual-mode key (mode "ECDH,ExDSA") - EdDSA signature and ECDH (Ed25519 key converted to X25519) both work
+$token_keygen = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:gen");
+if ($token_keygen == false) goto print_and_exit;             // exit on error
+$run = bin2hex(openssl_random_pseudo_bytes(3));
+foreach (array("ECDH,ExDSA" => true, "ExDSA" => false) as $mode => $has_ecdh) {
+  $ret_val = false;
+  $post_data = json_encode(array('label' => "T-11.5 ED25519 $mode $run", 'type' => "ED25519", 'mode' => $mode, 'descr' => base64_encode("CCTEST:T-11.5_ED25519_dual")));
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_keygen);
+  if ( $ret_stat != 200 ) { echo "ERROR: create ED25519 mode $mode: HTTP $ret_stat\n"; goto print_and_exit; }
+  $kid = $ret_val['kid'];
+  $ret_val = false;
+  $dummy_val = false;
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/$kid", $ret_val, $dummy_val, $token_keygen);
+  if ( ($ret_stat != 200) || !isset($ret_val['pubkey']) ) goto print_and_exit;
+  $ed_pub = base64_decode($ret_val['pubkey']);
+  $token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid");
+  if ($token == false) goto print_and_exit;
+  // a) EdDSA signature, verified locally
+  $msg = openssl_random_pseudo_bytes(48);
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, json_encode(array('kid' => $kid, 'msg' => base64_encode($msg), 'alg' => "Ed25519")), $token);
+  if ( ($ret_stat != 200) || !sodium_crypto_sign_verify_detached(base64_decode($ret_val['sign']), $msg, $ed_pub) ) { echo "ERROR: ED25519 mode $mode: signature (HTTP $ret_stat) does not verify locally\n"; goto print_and_exit; }
+  // b) ECDH with a local X25519 key: Z = X25519(peer private, Ed25519 public key converted to Curve25519)
+  $peer_priv = openssl_random_pseudo_bytes(32);
+  $peer_pub = sodium_crypto_scalarmult_base($peer_priv);
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, json_encode(array('kid' => $kid, 'pubkey' => base64_encode($peer_pub))), $token);
+  if ($has_ecdh) {
+    $z = sodium_crypto_scalarmult($peer_priv, sodium_crypto_sign_ed25519_pk_to_curve25519($ed_pub));
+    if ( ($ret_stat != 200) || (base64_decode($ret_val['ecdh']) !== $z) ) { echo "ERROR: ED25519 mode $mode: ECDH (HTTP $ret_stat) differs from local X25519\n"; goto print_and_exit; }
+  } else {
+    if ( $ret_stat == 200 ) { echo "ERROR: ED25519 mode $mode: ECDH allowed without the ECDH mode\n"; goto print_and_exit; }
+  }
+}
 // d) set result
 $test_cfg['subtests'][5] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
