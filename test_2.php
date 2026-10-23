@@ -137,6 +137,18 @@ do {
   if ( $ret_stat != 200 ) goto print_and_exit;
   if ( isset($ret_val['format']) ) {
     if ($ret_val['format'] == "done") break;
+    // N18: while the storage is formatted only /api/system/* is served - other API calls get 409
+    if (!isset($n18_checked)) {
+      $n18_checked = true;
+      $dummy_val = false;
+      $ret_val = false;
+      $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/auth/token", $ret_val, $dummy_val);
+      if ( $ret_stat != 409 ) { echo "ERROR: N18 auth/token during format: HTTP $ret_stat\n"; goto print_and_exit; }
+      $ret_val = false;
+      $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/keymgmt/list", $ret_val, $dummy_val);
+      if ( $ret_stat != 409 ) { echo "ERROR: N18 keymgmt/list during format: HTTP $ret_stat\n"; goto print_and_exit; }
+      echo "    N18: auth/token and keymgmt/list refused (409) during format\n";
+    }
   } else {
     break;
   }
