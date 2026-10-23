@@ -7,7 +7,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-10";
 $test_descr = "Key management functionality";
-$test_subtest_cnt = 7;
+$test_subtest_cnt = 8;
 
 
 // initialize the execution env
@@ -760,11 +760,64 @@ $test_cfg['subtests'][6] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 TEST7:
 echo "  subtest-7\n";
+$test_cfg['subtests'][7] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
+// DEV-445: GET /api/crypto/random[/<n>] - any valid token on an initialised device, TLS required, n = 1..8192, default 32
+// a) no token -> 401, over http -> 418
+$ret_val = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/crypto/random", $ret_val);
+if ( $ret_stat != 401 ) { echo "ERROR: no token gave $ret_stat\n"; goto print_and_exit; }
+$ret_val = false;
+$dummy_val = false;
+$ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/crypto/random", $ret_val, $dummy_val, $token_keylist);
+if ( $ret_stat != 418 ) { echo "ERROR: http gave $ret_stat\n"; goto print_and_exit; }
+// b) default length (any scope - reuse the listing token)
+$ret_val = false;
+$dummy_val = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/crypto/random", $ret_val, $dummy_val, $token_keylist);
+if ( $cfg_debug ) var_dump( $ret_val );
+if ( $ret_stat != 200 ) goto print_and_exit;
+if ( strlen(base64_decode($ret_val['rnd'], true)) != 32 ) { echo "ERROR: default length\n"; goto print_and_exit; }
+// c) wrong lengths and path
+foreach (array("/api/crypto/random/0" => 400, "/api/crypto/random/8193" => 400, "/api/crypto/random/abc" => 400, "/api/crypto/random/12x" => 400, "/api/crypto/randomx" => 404) as $path => $code) {
+  $ret_val = false;
+  $dummy_val = false;
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, $path, $ret_val, $dummy_val, $token_keylist);
+  if ( $ret_stat != $code ) { echo "ERROR: $path gave $ret_stat, expected $code\n"; goto print_and_exit; }
+}
+// d) 64 KB in 8 x 8192 B - every chunk full length and unique, all byte values present, mean close to 127.5
+$rnd = "";
+$chunks = array();
+for ($i = 0; $i < 8; $i++) {
+  $ret_val = false;
+  $dummy_val = false;
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/crypto/random/8192", $ret_val, $dummy_val, $token_keylist);
+  if ( $ret_stat != 200 ) goto print_and_exit;
+  $chunk = base64_decode($ret_val['rnd'], true);
+  if ( ($chunk === false) || (strlen($chunk) != 8192) || isset($chunks[$chunk]) ) { echo "ERROR: chunk $i\n"; goto print_and_exit; }
+  $chunks[$chunk] = true;
+  $rnd .= $chunk;
+}
+$freq = count_chars($rnd, 1);
+$mean = array_sum(array_map(function($v, $n) { return $v * $n; }, array_keys($freq), $freq)) / strlen($rnd);
+echo "    64 KB: " . count($freq) . " byte values, mean " . round($mean, 2) . "\n";
+if ( (strlen($rnd) != 65536) || (count($freq) != 256) || ($mean < 126) || ($mean > 129) ) goto print_and_exit;
+// e) set result
+$test_cfg['subtests'][7] = 'OK';                           // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 8        ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST8:
+echo "  subtest-8\n";
 if ($diag_mode == false) {
   echo "    No DIAG mode, subtest will be skipped.\n";
   goto print_and_exit;
 }
-$test_cfg['subtests'][7] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
+$test_cfg['subtests'][8] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) reuse tokens previous subtest but to reboot need new
 $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");       // token will be needed to reboot
 if ($token == false) goto print_and_exit;                    // exit on error
@@ -781,7 +834,7 @@ if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
 if ( $ret_val['fls_state'] == 0 ) goto print_and_exit;     // expected is failer state (non-zero)
 // d) try to creat a key
-$keycreate_arg = array('label' => "T-10.7 test key", 'type' => "CURVE25519");
+$keycreate_arg = array('label' => "T-10.8 test key", 'type' => "CURVE25519");
 $ret_val = false;
 $post_data = json_encode($keycreate_arg);
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_keygen);
@@ -795,7 +848,7 @@ if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
 sleep(10);  //wait 
 // f) set result
-$test_cfg['subtests'][7] = 'OK';                           // mark this subtest as OK
+$test_cfg['subtests'][8] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
