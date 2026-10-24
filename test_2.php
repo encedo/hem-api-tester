@@ -271,7 +271,7 @@ $test_cfg['subtests'][2] = 'ERROR';                        // mark this subtest 
 $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/auth/init", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 406 ) goto print_and_exit;               // expected 406 means already inited - expected state
+if ( $ret_stat != 409 ) goto print_and_exit;               // expected 409 means already inited - expected state
 // d) set result
 $test_cfg['subtests'][2] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////

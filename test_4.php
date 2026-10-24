@@ -223,7 +223,7 @@ if ( strstr($test_cfg['conf'], "PPA") ) {
   $not_used = '{"crt":"not_importand","genuine":"not_importand"}';
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config/provisioning", $ret_val, $not_used, $token_correct);
   if ( $cfg_debug ) var_dump( $ret_val );
-  if ( $ret_stat != 403 ) goto print_and_exit;                //expected is 403 - device provisioned
+  if ( $ret_stat != 409 ) goto print_and_exit;                //expected is 409 - device provisioned (state)
 }
 // d) set result
 $test_cfg['subtests'][3] = 'OK';                           // mark this subtest as OK

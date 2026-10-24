@@ -103,7 +103,7 @@ foreach($keychain as $item) {
   $post_data = json_encode( $oper_arg );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/verify", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
-  if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC verify success
+  if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - HMAC verify success
   $counter++;
 }
 // g) if above loop ends and no 'goto' calls, all HMAC tests passed!
@@ -191,7 +191,7 @@ foreach($keys_to_test as $item) {
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
-    if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
+    if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
     //Ed25519ph - EdDSA
     $context = base64_encode( openssl_random_pseudo_bytes( 32 ) );    // random context
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "Ed25519ph", 'ctx' => $context);
@@ -205,7 +205,7 @@ foreach($keys_to_test as $item) {
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
-    if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
+    if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
     //Ed25519ctx - EdDSA
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "Ed25519ctx", 'ctx' => $context);
     $post_data = json_encode( $oper_arg );
@@ -218,7 +218,7 @@ foreach($keys_to_test as $item) {
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
-    if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
+    if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
     $counter++;
   } else
   if ($type == "ED448") {
@@ -235,7 +235,7 @@ foreach($keys_to_test as $item) {
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
-    if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
+    if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
     //Ed448ph - EdDSA
     $context = base64_encode( openssl_random_pseudo_bytes( 32 ) );    // random context
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "Ed448ph", 'ctx' => $context);
@@ -249,7 +249,7 @@ foreach($keys_to_test as $item) {
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
-    if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
+    if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
     $counter++;
   } else {
     //SHA256WithECDSA  - ECDSA
@@ -264,7 +264,7 @@ foreach($keys_to_test as $item) {
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
-    if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
+    if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
     //SHA384WithECDSA  - ECDSA
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "SHA384WithECDSA");
     $post_data = json_encode( $oper_arg );
@@ -277,7 +277,7 @@ foreach($keys_to_test as $item) {
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
-    if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
+    if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
     //SHA512WithECDSA  - ECDSA
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "SHA512WithECDSA");
     $post_data = json_encode( $oper_arg );
@@ -290,7 +290,7 @@ foreach($keys_to_test as $item) {
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
-    if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
+    if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
     $counter++;
   }
 }
@@ -633,7 +633,7 @@ foreach($keychain as $item) {
   $post_data = json_encode( $oper_arg );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/verify", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
-  if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC verify success
+  if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - HMAC verify success
   //echo "HMAC - PUBKEY\n";
   $msg = base64_encode( openssl_random_pseudo_bytes( 64 ) );
   //hash
@@ -650,7 +650,7 @@ foreach($keychain as $item) {
   $post_data = json_encode( $oper_arg );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/verify", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
-  if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC verify success
+  if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - HMAC verify success
   //echo "CIPHER - EXT_KID\n";
   $msg = base64_encode( openssl_random_pseudo_bytes( 100 ) ); //CBC can handle any message size - padding
   $alg = "AES128-CBC";
@@ -1002,7 +1002,7 @@ foreach($keychain as $item) {
   $post_data = json_encode( $oper_arg );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mldsa/verify", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
-  if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC verify success
+  if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - HMAC verify success
   $counter++;
 }
 // c) if above loop ends and no 'goto' calls, all ML-KEM tests passed!

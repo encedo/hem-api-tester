@@ -361,10 +361,10 @@ foreach($keys_to_import as $type => $pubkey) {
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/import", $ret_val, $post_data, $token_keyimp);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat == 200 ) { $imported++; if (strpos($type, "SECP") === 0) $imported_nist[$type] = $ret_val['kid']; }
-  else if ( $ret_stat == 406 ) $failed_calls[$type] = 406;
+  else if ( $ret_stat == 409 ) $failed_calls[$type] = 409;
   else break;    // this is so unexpected!
 }
-if ( ($ret_stat != 200) && ($ret_stat != 406)) goto print_and_exit;
+if ( ($ret_stat != 200) && ($ret_stat != 409)) goto print_and_exit;
 // DEV-434: imported NIST public keys (compressed, prefix 02 and 03) are read back unchanged - point parity kept
 if (!empty($imported_nist)) {
   $token_keyget = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:get");
@@ -400,7 +400,7 @@ do {
 if (($imported > 0) && ($imported == count($keys_to_import)) ) {      //expected if first time import
   //echo "all imported\n";
 } else
-if ( count($failed_calls) == count($keys_to_import)) {                // expected if re-run - key duplication is impossible (406)
+if ( count($failed_calls) == count($keys_to_import)) {                // expected if re-run - key duplication is impossible (409)
   //echo "all failed\n";
 } else goto print_and_exit;
 // e) set result
@@ -614,7 +614,7 @@ foreach ($list as $item) {
 foreach (array("", "^", "\$") as $descr) {
   if ( t10_search($cfg_domain, $token_keylist, array('descr' => $descr)) !== 400 ) { echo "ERROR: search descr \"$descr\" not rejected\n"; goto print_and_exit; }
 }
-if ( t10_search($cfg_domain, $token_keylist, array('descr' => "^" . base64_encode(str_repeat("A", 129)))) !== 406 ) goto print_and_exit;
+if ( t10_search($cfg_domain, $token_keylist, array('descr' => "^" . base64_encode(str_repeat("A", 129)))) !== 400 ) goto print_and_exit;
 if ( !is_array(t10_search($cfg_domain, $token_keylist, array('descr' => "^" . base64_encode(str_repeat("A", 128))))) ) goto print_and_exit;
 // e) set result
 $test_cfg['subtests'][4] = 'OK';                           // mark this subtest as OK

@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 12;
+$test_subtest_cnt = 13;
 
 
 // initialize the execution env
@@ -451,13 +451,79 @@ $test_cfg['subtests'][11] = 'OK';                             // mark this subte
 TEST12:
 echo "  subtest-12\n";
 $test_cfg['subtests'][12] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) verify endpoints answer 200 with "verified" - false for a wrong MAC / signature, 404 for an unknown key (DEV-438 phase 3:
+//    a wrong MAC / signature was 406)
+$keys = array();
+foreach (array('ed' => array('type' => "ED25519", 'mode' => "ExDSA"), 'hm' => array('type' => "SHA2-256")) as $k => $v) {
+  $ret_val = false;
+  $post_data = json_encode( $v + array('label' => "T-15 $k $run", 'descr' => base64_encode("CCTEST:T-15_$k")) );
+  if ( http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_gen) != 200 ) goto print_and_exit;
+  $keys[$k] = array($ret_val['kid'], helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:" . $ret_val['kid']));
+  if ($keys[$k][1] == false) goto print_and_exit;
+}
+$kid_none = bin2hex(random_bytes(16));
+$keys['none'] = array($kid_none, helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid_none"));
+if ($keys['none'][1] == false) goto print_and_exit;
+$msg = base64_encode(random_bytes(64));
+$ret_val = false;
+$post_data = json_encode( array('kid' => $keys['hm'][0], 'msg' => $msg) );
+if ( http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/hash", $ret_val, $post_data, $keys['hm'][1]) != 200 ) goto print_and_exit;
+$mac = base64_decode($ret_val['mac']);
+$ret_val = false;
+$post_data = json_encode( array('kid' => $keys['ed'][0], 'msg' => $msg, 'alg' => "Ed25519") );
+if ( http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $keys['ed'][1]) != 200 ) goto print_and_exit;
+$sig = base64_decode($ret_val['sign']);
+$mac[0] = chr(ord($mac[0]) ^ 1);
+$sig[0] = chr(ord($sig[0]) ^ 1);
+foreach (array("hmac/verify, wrong MAC" => array("/api/crypto/hmac/verify", array('kid' => $keys['hm'][0], 'msg' => $msg, 'mac' => base64_encode($mac)), $keys['hm'][1]),
+               "exdsa/verify, wrong signature" => array("/api/crypto/exdsa/verify", array('kid' => $keys['ed'][0], 'msg' => $msg, 'alg' => "Ed25519", 'sign' => base64_encode($sig)), $keys['ed'][1])) as $name => $v) {
+  $ret_val = false;
+  $post_data = json_encode($v[1]);
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, $v[0], $ret_val, $post_data, $v[2]);
+  if ( ($ret_stat != 200) || (@$ret_val['verified'] !== false) ) { echo "    $name: HTTP $ret_stat " . json_encode($ret_val) . ", expected 200 {\"verified\":false}\n"; goto print_and_exit; }
+}
+// b) error codes by the HEM API docs: 400 input, 403 scope, 404 not found, 409 state (DEV-438 phase 3: mostly 406)
+$token_d0 = helper_authorize($cfg_domain, $cfg_passpharse, "storage:disk0");
+$token_ecdh = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid_ecdh");
+$token_keylist = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");
+if (($token_d0 == false) || ($token_ecdh == false) || ($token_keylist == false)) goto print_and_exit;
+$cases = array();
+foreach (array("hmac/verify, unknown kid" => array("https", "POST", "/api/crypto/hmac/verify", array('kid' => $kid_none, 'msg' => $msg, 'mac' => base64_encode($mac)), $keys['none'][1], 404),
+               "exdsa/verify, unknown kid" => array("https", "POST", "/api/crypto/exdsa/verify", array('kid' => $kid_none, 'msg' => $msg, 'alg' => "Ed25519", 'sign' => base64_encode($sig)), $keys['none'][1], 404),
+               "hmac/hash, alg too long" => array("https", "POST", "/api/crypto/hmac/hash", array('kid' => $keys['hm'][0], 'msg' => $msg, 'alg' => "SHA2-256-X"), $keys['hm'][1], 400),
+               "ecdh, no pubkey / ext_kid" => array("https", "POST", "/api/crypto/ecdh", array('kid' => $kid_ecdh), $token_ecdh, 400),
+               "cipher/decrypt CBC, 20 B" => array("https", "POST", "/api/crypto/cipher/decrypt", array('kid' => $kid_aes, 'msg' => base64_encode(random_bytes(20)), 'alg' => "AES256-CBC", 'iv' => base64_encode(random_bytes(16))), $token_aes, 400),
+               "keymgmt/search, mode not a string" => array("https", "POST", "/api/keymgmt/search", array('descr' => "^" . base64_encode("CCTEST:"), 'mode' => 5), $token_keylist, 400),
+               "keymgmt/list, offset not a number" => array("https", "GET", "/api/keymgmt/list/abc", false, $token_keylist, 400),
+               "storage/unlock/rw, ro scope" => array("https", "GET", "/api/storage/unlock/rw", false, $token_d0, 403),
+               "storage/unlock/xx" => array("https", "GET", "/api/storage/unlock/xx", false, $token_d0, 404),
+               "auth/init, initialised" => array("http", "GET", "/api/auth/init", false, false, 409)) as $name => $v) {
+  $ret_val = false;
+  $post_data = ($v[3] === false) ? false : json_encode($v[3]);
+  $cases[] = array($name, ($v[4] === false) ? http_transaction($v[0], $v[1], $cfg_domain, $v[2], $ret_val) : http_transaction($v[0], $v[1], $cfg_domain, $v[2], $ret_val, $post_data, $v[4]), $v[5]);
+}
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// c) set result
+$test_cfg['subtests'][12] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 13       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST13:
+echo "  subtest-13\n";
+$test_cfg['subtests'][13] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) service wipe to the factory default (DEV-438): an unknown wipeout value is refused; "factory" wipes the TOE and formats
 //    the internal disk - the TOE comes back not initialised and without the TLS files of the previous owner, so HTTPS does
 //    not start (after a classic wipe it starts with /tmp/tls.json). Runs last - the TOE has to be initialised again (T-2).
 $ret_val = false;
 $post_data = json_encode( array('wipeout' => "nonsense") );
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token_cfg);
-if ( $ret_stat != 406 ) { echo "    wipeout \"nonsense\": HTTP $ret_stat, expected 406\n"; goto print_and_exit; }
+if ( $ret_stat != 400 ) { echo "    wipeout \"nonsense\": HTTP $ret_stat, expected 400\n"; goto print_and_exit; }
 $ret_val = false;
 $post_data = json_encode( array('wipeout' => "factory") );
 $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token_cfg);   // over http - also for a TOE with a broken TLS
@@ -474,7 +540,7 @@ $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);
 if ( ($ret_stat != 200) || !isset($ret_val['inited']) || ($ret_val['https'] != false) ) { echo "    after the factory wipe: " . json_encode($ret_val) . "\n"; goto print_and_exit; }
 // b) set result
-$test_cfg['subtests'][12] = 'OK';                             // mark this subtest as OK
+$test_cfg['subtests'][13] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
