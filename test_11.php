@@ -821,7 +821,8 @@ TEST7:
 echo "  subtest-7\n";
 if ($diag_mode == false) {
   echo "    No DIAG mode, subtest will be skipped.\n";
-  goto print_and_exit;
+  $test_cfg['subtests'][7] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
+  goto TEST8;
 }
 $test_cfg['subtests'][7] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) prerequirements
@@ -1016,7 +1017,7 @@ $test_cfg['subtests'][9] = 'OK';                           // mark this subtest 
 $check_passed = 0;
 $check_failed = 0;
 foreach($test_cfg['subtests'] as $no => $val) {
-  if ($val === 'OK') $check_passed++;
+  if (($val === 'OK') || ($val === 'SKIPPED (no DIAG)')) $check_passed++;   // a DIAG subtest skipped on a build without DIAG is not a failure
   else $check_failed++;
 }
 if ($check_failed == 0) $test_cfg['result'] = 'PASS';

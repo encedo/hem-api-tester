@@ -630,6 +630,7 @@ TEST5:
 echo "  subtest-5\n";
 if ($diag_mode == false) {
   echo "    No DIAG mode, subtest will be skipped.\n";
+  $test_cfg['subtests'][5] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
   goto TEST6;
 }
 $test_cfg['subtests'][5] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
@@ -815,7 +816,8 @@ TEST8:
 echo "  subtest-8\n";
 if ($diag_mode == false) {
   echo "    No DIAG mode, subtest will be skipped.\n";
-  goto print_and_exit;
+  $test_cfg['subtests'][8] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
+  goto test_summary;
 }
 $test_cfg['subtests'][8] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) reuse tokens previous subtest but to reboot need new
@@ -857,11 +859,12 @@ SUMMARY:
 /////////////////////////////////////////////////////////////////////
 // Test summary      ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+test_summary:
 // if execution reach this point - all test are passed
 $check_passed = 0;
 $check_failed = 0;
 foreach($test_cfg['subtests'] as $no => $val) {
-  if ($val === 'OK') $check_passed++;
+  if (($val === 'OK') || ($val === 'SKIPPED (no DIAG)')) $check_passed++;   // a DIAG subtest skipped on a build without DIAG is not a failure
   else $check_failed++;
 }
 if ($check_failed == 0) $test_cfg['result'] = 'PASS';
