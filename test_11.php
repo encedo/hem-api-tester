@@ -36,7 +36,7 @@ if ( intval($ret_val['fls_state']) !== 0) {
   goto print_and_exit;     // exit as well if prereq not fulfill
 }
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
-  $cfg_domain = $ret_val['hostname'];                      
+  $cfg_domain = $ret_val['hostname'];
 }
 // b) detect, get version details etc
 $ret_val = false;
@@ -53,24 +53,24 @@ $diag_mode = strstr($test_cfg['fwv'], "-DIAG");
 $ret = helper_checkin($cfg_domain);
 if ($ret == false) goto print_and_exit;                     // exit on error
 // d) generate keychain search over pattern keys for HMAC operations
-$pattern_plain = "CCTEST:T-10.1_SHA";   
+$pattern_plain = "CCTEST:T-10.1_SHA";
 $pattern = "^".base64_encode($pattern_plain);  //^ denotes 'begining by following bytes' - like regexpr :)
 $offset = 0;
 $keychain = array();
 do {
   $ret_val = false;
   $post_array = array('descr' => $pattern, 'offset' => $offset );  //^ denotes 'begining by following bytes' - like regexpr :)
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/search", $ret_val, $post_data);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;    //200 if found, 404 if not
   $total = $ret_val['total'];
   $listed = $ret_val['listed'];
-  if ($listed == 0) break;  // go all the keys  
-  foreach($ret_val['list'] as $item) $keychain[] = $item; 
+  if ($listed == 0) break;  // go all the keys
+  foreach($ret_val['list'] as $item) $keychain[] = $item;
   $offset = $offset + $listed;
   if ($offset >= $total) break;
-} while (true);  
+} while (true);
 // e) ranodm message to perform test on
 $msg_raw = base64_encode( openssl_random_pseudo_bytes( 250 ) );    // ranodm bytes of data
 $keys_to_test = $ret_val['list'];
@@ -80,11 +80,11 @@ foreach($keychain as $item) {
   $kid = $item['kid'];
   // gen access token for that KID
   $token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid");   // more here https://docs.encedo.com/hem-api/reference/api-reference/cryptography-operations/hmac#required-access-scope
-  if ($token == false) goto print_and_exit;                    // exit on error 
+  if ($token == false) goto print_and_exit;                    // exit on error
   // gen mac
   $ret_val = false;
   $oper_arg = array('kid' => $kid, 'msg' => $msg_raw);
-  $post_data = json_encode( $oper_arg );    
+  $post_data = json_encode( $oper_arg );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/hash", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC hash generated
@@ -94,13 +94,13 @@ foreach($keychain as $item) {
     $kid_subtest6a = $kid;
   } else {
     if (!isset($kid_subtest6b)) {
-      $kid_subtest6b = $kid;  
+      $kid_subtest6b = $kid;
     }
   }
   // verify mac
   $ret_val = false;
   $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'mac' => $mac);
-  $post_data = json_encode( $oper_arg );    
+  $post_data = json_encode( $oper_arg );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/verify", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC verify success
@@ -123,71 +123,71 @@ TEST2:
 echo "  subtest-2\n";
 $test_cfg['subtests'][2] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) generate keychain search over pattern keys for ExDSA operations - NIST curves
-$pattern_plain = "CCTEST:T-10.1_SECP";   
+$pattern_plain = "CCTEST:T-10.1_SECP";
 $pattern = "^".base64_encode($pattern_plain);  //^ denotes 'begining by following bytes' - like regexpr :)
 $offset = 0;
 $keychain = array();
 do {
   $ret_val = false;
   $post_array = array('descr' => $pattern, 'offset' => $offset );  //^ denotes 'begining by following bytes' - like regexpr :)
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/search", $ret_val, $post_data);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;    //200 if found, 404 if not
   $total = $ret_val['total'];
   $listed = $ret_val['listed'];
-  if ($listed == 0) break;  // go all the keys  
-  foreach($ret_val['list'] as $item) $keychain[] = $item; 
+  if ($listed == 0) break;  // go all the keys
+  foreach($ret_val['list'] as $item) $keychain[] = $item;
   $offset = $offset + $listed;
   if ($offset >= $total) break;   //?
-} while (true);  
+} while (true);
 // b) add ED255 and ED448 keys
-$pattern_plain = "CCTEST:T-10.1_ED";   
+$pattern_plain = "CCTEST:T-10.1_ED";
 $pattern = "^".base64_encode($pattern_plain);  //^ denotes 'begining by following bytes' - like regexpr :)
 $offset = 0;
 do {
   $ret_val = false;
   $post_array = array('descr' => $pattern, 'offset' => $offset );  //^ denotes 'begining by following bytes' - like regexpr :)
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/search", $ret_val, $post_data);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;    //200 if found, 404 if not
   $total = $ret_val['total'];
   $listed = $ret_val['listed'];
-  if ($listed == 0) break;  // go all the keys  
-  foreach($ret_val['list'] as $item) $keychain[] = $item; 
+  if ($listed == 0) break;  // go all the keys
+  foreach($ret_val['list'] as $item) $keychain[] = $item;
   $offset = $offset + $listed;
   if ($offset >= $total) break;   //?
-} while (true);  
+} while (true);
 $keys_to_test = $keychain;
-$msg_raw = base64_encode( openssl_random_pseudo_bytes( 32 ) );    // random 
+$msg_raw = base64_encode( openssl_random_pseudo_bytes( 32 ) );    // random
 // f) iterate over found keys to call ExDSA sign & verify
 $counter = 0;
 foreach($keys_to_test as $item) {
   $kid = $item['kid'];
-  $is_ecdh = strstr($item['type'], "ECDH") ? true : false; 
+  $is_ecdh = strstr($item['type'], "ECDH") ? true : false;
   $is_exdsa = strstr($item['type'], "ExDSA") ? true : false;
-  $is_pkey = strstr($item['type'], "PKEY") ? true : false; 
+  $is_pkey = strstr($item['type'], "PKEY") ? true : false;
   $type = false;
   $item_type = explode(",",  $item['type']);
   if ($item_type == false) goto print_and_exit; // wtf? this is odd
   $type = $item_type[ count($item_type) - 1];
-  //echo "    Process key type: $type over ECDH:$is_ecdh and ExDSA:$is_exdsa, PKEY:$is_pkey\n";  
+  //echo "    Process key type: $type over ECDH:$is_ecdh and ExDSA:$is_exdsa, PKEY:$is_pkey\n";
    if ($is_pkey != true) continue; // process only keys with private key
   // gen access token for that KID
   $token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid");   // more here https://docs.encedo.com/hem-api/reference/api-reference/cryptography-operations/hmac#required-access-scope
-  if ($token == false) goto print_and_exit;                    // exit on error 
+  if ($token == false) goto print_and_exit;                    // exit on error
   // process key by type
   if ($type == "ED25519") {
     //Ed25519 - EdDSA
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "Ed25519");
-    $post_data = json_encode( $oper_arg );    
+    $post_data = json_encode( $oper_arg );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature generated
     $oper_arg['sign'] = $ret_val['sign'];
-    $post_data = json_encode( $oper_arg );    
+    $post_data = json_encode( $oper_arg );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
@@ -195,26 +195,26 @@ foreach($keys_to_test as $item) {
     //Ed25519ph - EdDSA
     $context = base64_encode( openssl_random_pseudo_bytes( 32 ) );    // random context
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "Ed25519ph", 'ctx' => $context);
-    $post_data = json_encode( $oper_arg );    
+    $post_data = json_encode( $oper_arg );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature generated
     $oper_arg['sign'] = $ret_val['sign'];
-    $post_data = json_encode( $oper_arg );    
+    $post_data = json_encode( $oper_arg );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
     //Ed25519ctx - EdDSA
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "Ed25519ctx", 'ctx' => $context);
-    $post_data = json_encode( $oper_arg );    
+    $post_data = json_encode( $oper_arg );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature generated
     $oper_arg['sign'] = $ret_val['sign'];
-    $post_data = json_encode( $oper_arg );    
+    $post_data = json_encode( $oper_arg );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
@@ -225,13 +225,13 @@ foreach($keys_to_test as $item) {
     //Ed448 - EdDSA
     $context = base64_encode( openssl_random_pseudo_bytes( 32 ) );    // random context
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "Ed448", 'ctx' => $context);
-    $post_data = json_encode( $oper_arg );    
+    $post_data = json_encode( $oper_arg );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature generated
     $oper_arg['sign'] = $ret_val['sign'];
-    $post_data = json_encode( $oper_arg );    
+    $post_data = json_encode( $oper_arg );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
@@ -239,13 +239,13 @@ foreach($keys_to_test as $item) {
     //Ed448ph - EdDSA
     $context = base64_encode( openssl_random_pseudo_bytes( 32 ) );    // random context
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "Ed448ph", 'ctx' => $context);
-    $post_data = json_encode( $oper_arg );    
+    $post_data = json_encode( $oper_arg );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature generated
     $oper_arg['sign'] = $ret_val['sign'];
-    $post_data = json_encode( $oper_arg );    
+    $post_data = json_encode( $oper_arg );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
@@ -254,39 +254,39 @@ foreach($keys_to_test as $item) {
   } else {
     //SHA256WithECDSA  - ECDSA
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "SHA256WithECDSA");
-    $post_data = json_encode( $oper_arg );    
+    $post_data = json_encode( $oper_arg );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature generated
     $oper_arg['sign'] = $ret_val['sign'];
-    $post_data = json_encode( $oper_arg );    
+    $post_data = json_encode( $oper_arg );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
     //SHA384WithECDSA  - ECDSA
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "SHA384WithECDSA");
-    $post_data = json_encode( $oper_arg );    
+    $post_data = json_encode( $oper_arg );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature generated
     $oper_arg['sign'] = $ret_val['sign'];
-    $post_data = json_encode( $oper_arg );    
+    $post_data = json_encode( $oper_arg );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
     //SHA512WithECDSA  - ECDSA
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "SHA512WithECDSA");
-    $post_data = json_encode( $oper_arg );    
+    $post_data = json_encode( $oper_arg );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - ExDSA signature generated
     $oper_arg['sign'] = $ret_val['sign'];
-    $post_data = json_encode( $oper_arg );    
+    $post_data = json_encode( $oper_arg );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
@@ -311,24 +311,24 @@ TEST3:
 echo "  subtest-3\n";
 $test_cfg['subtests'][3] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) generate keychain search over pattern keys for AES operations
-$pattern_plain = "CCTEST:T-10.1_AES";   
+$pattern_plain = "CCTEST:T-10.1_AES";
 $pattern = "^".base64_encode($pattern_plain);  //^ denotes 'begining by following bytes' - like regexpr :)
 $offset = 0;
 $keychain = array();
 do {
   $ret_val = false;
   $post_array = array('descr' => $pattern, 'offset' => $offset );  //^ denotes 'begining by following bytes' - like regexpr :)
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/search", $ret_val, $post_data);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;    //200 if found, 404 if not
   $total = $ret_val['total'];
   $listed = $ret_val['listed'];
-  if ($listed == 0) break;  // go all the keys  
-  foreach($ret_val['list'] as $item) $keychain[] = $item; 
+  if ($listed == 0) break;  // go all the keys
+  foreach($ret_val['list'] as $item) $keychain[] = $item;
   $offset = $offset + $listed;
   if ($offset >= $total) break;   //?
-} while (true);  
+} while (true);
 // b) iterate over found keys
 $counter = 0;
 foreach($keychain as $item) {
@@ -338,16 +338,16 @@ foreach($keychain as $item) {
   $item_type = explode(",",  $item['type']);
   if ($item_type == false) goto print_and_exit; // wtf? this is odd
   $type = $item_type[ count($item_type) - 1];
-  //echo "    Process key type: $type   KID: $kid\n";  
+  //echo "    Process key type: $type   KID: $kid\n";
   // gen access token for that KID
   $token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid");   // more here https://docs.encedo.com/hem-api/reference/api-reference/cryptography-operations/encryption/encryption-decryption#required-access-scope
-  if ($token == false) goto print_and_exit;                    // exit on error 
+  if ($token == false) goto print_and_exit;                    // exit on error
   //AES in ECB mode
   //encrypt example message
   $msg = base64_encode( openssl_random_pseudo_bytes( 64 ) );  //msg len HAVE TO be multiple of AES block size 16bytes
   $alg = "$type-ECB";
   $post_array = array('kid' => $kid, 'msg' => $msg, 'alg' => $alg);
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/encrypt", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
@@ -355,7 +355,7 @@ foreach($keychain as $item) {
   $ciphertext = $ret_val['ciphertext'];
   //try to decrypt the message
   $post_array['msg'] = $ciphertext;
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/decrypt", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
@@ -365,10 +365,10 @@ foreach($keychain as $item) {
   if ($msg != $msg_test) goto print_and_exit;    //expected is 200 on success
   //AES in CBC mode
   //encrypt example message
-  $msg = base64_encode( openssl_random_pseudo_bytes( 100 ) ); //CBC can handle any message size - padding 
+  $msg = base64_encode( openssl_random_pseudo_bytes( 100 ) ); //CBC can handle any message size - padding
   $alg = "$type-CBC";
   $post_array = array('kid' => $kid, 'msg' => $msg, 'alg' => $alg);
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/encrypt", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
@@ -378,7 +378,7 @@ foreach($keychain as $item) {
   //try to decrypt the message
   $post_array['msg'] = $ciphertext;
   $post_array['iv'] = $iv;
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/decrypt", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
@@ -388,11 +388,11 @@ foreach($keychain as $item) {
   if ($msg != $msg_test) goto print_and_exit;    //expected is 200 on success
   //AES in GCM mode
   //encrypt example message
-  $msg = base64_encode( openssl_random_pseudo_bytes( 100 ) ); //GCM can handle any message size 
-  $aad = base64_encode( openssl_random_pseudo_bytes( 32 ) );  
+  $msg = base64_encode( openssl_random_pseudo_bytes( 100 ) ); //GCM can handle any message size
+  $aad = base64_encode( openssl_random_pseudo_bytes( 32 ) );
   $alg = "$type-GCM";
   $post_array = array('kid' => $kid, 'msg' => $msg, 'alg' => $alg, 'aad' => $aad);
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/encrypt", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
@@ -404,7 +404,7 @@ foreach($keychain as $item) {
   $post_array['msg'] = $ciphertext;
   $post_array['iv'] = $iv;
   $post_array['tag'] = $tag;
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/decrypt", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
@@ -429,42 +429,42 @@ TEST4:
 echo "  subtest-4\n";
 $test_cfg['subtests'][4] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) generate keychain search over pattern keys for AES operations
-$pattern_plain = "CCTEST:T-10.1_AES";   
+$pattern_plain = "CCTEST:T-10.1_AES";
 $pattern = "^".base64_encode($pattern_plain);  //^ denotes 'begining by following bytes' - like regexpr :)
 $offset = 0;
 $keychain = array();
 do {
   $ret_val = false;
   $post_array = array('descr' => $pattern, 'offset' => $offset );  //^ denotes 'begining by following bytes' - like regexpr :)
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/search", $ret_val, $post_data);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;    //200 if found, 404 if not
   $total = $ret_val['total'];
   $listed = $ret_val['listed'];
-  if ($listed == 0) break;  // go all the keys  
-  foreach($ret_val['list'] as $item) $keychain[] = $item; 
+  if ($listed == 0) break;  // go all the keys
+  foreach($ret_val['list'] as $item) $keychain[] = $item;
   $offset = $offset + $listed;
   if ($offset >= $total) break;   //?
-} while (true);  
+} while (true);
 // b) iterate over found keys
 $counter = 0;
 foreach($keychain as $item) {
-  //var_dump($item);  
+  //var_dump($item);
   $kid = $item['kid'];
   $type = false;
   //parse keytype
   $item_type = explode(",",  $item['type']);
   if ($item_type == false) goto print_and_exit; // wtf? this is odd
   $type = $item_type[ count($item_type) - 1];
-  //echo "    Process key type: $type   KID: $kid\n";  
+  //echo "    Process key type: $type   KID: $kid\n";
   // gen access token for that KID
   $token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid");   // more here https://docs.encedo.com/hem-api/reference/api-reference/cryptography-operations/encryption/encryption-decryption#required-access-scope
-  if ($token == false) goto print_and_exit;                    // exit on error 
+  if ($token == false) goto print_and_exit;                    // exit on error
   //WRAP
   $msg = base64_encode( openssl_random_pseudo_bytes( 32 ) ); // example random message to wrap (KEK by NIST)
   $post_array = array('kid' => $kid, 'alg' => $type, 'msg' => $msg);
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/wrap", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
@@ -472,7 +472,7 @@ foreach($keychain as $item) {
   $wrapped = $ret_val['wrapped'];
   //UNWARP
   $post_array = array('kid' => $kid, 'alg' => $type, 'msg' => $wrapped);
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/unwrap", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
@@ -497,76 +497,76 @@ TEST5:
 echo "  subtest-5\n";
 $test_cfg['subtests'][5] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) generate keychain search over pattern keys for ECDH operations - NIST curves
-$pattern_plain = "CCTEST:T-10.1_SECP";   
+$pattern_plain = "CCTEST:T-10.1_SECP";
 $pattern = "^".base64_encode($pattern_plain);  //^ denotes 'begining by following bytes' - like regexpr :)
 $offset = 0;
 $keychain = array();
 do {
   $ret_val = false;
   $post_array = array('descr' => $pattern, 'offset' => $offset );  //^ denotes 'begining by following bytes' - like regexpr :)
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/search", $ret_val, $post_data);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;    //200 if found, 404 if not
   $total = $ret_val['total'];
   $listed = $ret_val['listed'];
-  if ($listed == 0) break;  // go all the keys  
-  foreach($ret_val['list'] as $item) $keychain[] = $item; 
+  if ($listed == 0) break;  // go all the keys
+  foreach($ret_val['list'] as $item) $keychain[] = $item;
   $offset = $offset + $listed;
   if ($offset >= $total) break;   //?
-} while (true);  
+} while (true);
 // b) add Curve255 and Curve448 keys
-$pattern_plain = "CCTEST:T-10.1_CURVE";   
+$pattern_plain = "CCTEST:T-10.1_CURVE";
 $pattern = "^".base64_encode($pattern_plain);  //^ denotes 'begining by following bytes' - like regexpr :)
 $offset = 0;
 do {
   $ret_val = false;
   $post_array = array('descr' => $pattern, 'offset' => $offset );  //^ denotes 'begining by following bytes' - like regexpr :)
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/search", $ret_val, $post_data);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;    //200 if found, 404 if not
   $total = $ret_val['total'];
   $listed = $ret_val['listed'];
-  if ($listed == 0) break;  // go all the keys  
-  foreach($ret_val['list'] as $item) $keychain[] = $item; 
+  if ($listed == 0) break;  // go all the keys
+  foreach($ret_val['list'] as $item) $keychain[] = $item;
   $offset = $offset + $listed;
   if ($offset >= $total) break;   //?
-} while (true);  
+} while (true);
 $msg_raw = base64_encode( openssl_random_pseudo_bytes( 8 ) );    // ranodm
-//below example public keys will be used to perform ECDH 
-$supported_key_types_ecdh = array(  "SECP256R1"  => "AyH/xovr5aRefadZgVL8+ydEwEa6dzgBXmvPxFv+/LIq", 
-                                    "SECP384R1"  => "AscrwMd9jmdQOdC4aMbcMqaTzx4xm3DUnVhotIieMG7JyWd+UADS0snfBegnwM2NJQ==", 
-                                    "SECP521R1"  => "AgGFg+WSt3MRDdu8JQRLrG2eTrm9yhiS7JKIwQfdyZl229qzaIxKigK0XVYUn1SNo5ZW8HltDEcre2wf86ZGKBYlfA==", 
-                                    "SECP256K1"  => "A5wQQqNR4mRCzgyykxp9D/I0968QHLBGEGONyIQVs0Qh", 
-                                    "CURVE25519" => "X7xUStEGknG4goyuP1VlgelMwYaau0I3SddDU3wQsmc=", 
+//below example public keys will be used to perform ECDH
+$supported_key_types_ecdh = array(  "SECP256R1"  => "AyH/xovr5aRefadZgVL8+ydEwEa6dzgBXmvPxFv+/LIq",
+                                    "SECP384R1"  => "AscrwMd9jmdQOdC4aMbcMqaTzx4xm3DUnVhotIieMG7JyWd+UADS0snfBegnwM2NJQ==",
+                                    "SECP521R1"  => "AgGFg+WSt3MRDdu8JQRLrG2eTrm9yhiS7JKIwQfdyZl229qzaIxKigK0XVYUn1SNo5ZW8HltDEcre2wf86ZGKBYlfA==",
+                                    "SECP256K1"  => "A5wQQqNR4mRCzgyykxp9D/I0968QHLBGEGONyIQVs0Qh",
+                                    "CURVE25519" => "X7xUStEGknG4goyuP1VlgelMwYaau0I3SddDU3wQsmc=",
                                     "CURVE448"   => "A75QwnTMiUJd0T1TPsvZBpIUCmb79FWBMQyKuQkHwlsm5gNugOQwmZkb+EFekuL1fiHQNZN5X0I="
-);    
+);
 $supported_alg = array( "SHA2-256", "SHA2-384", "SHA2-512", "SHA3-256", "SHA3-384", "SHA3-512", "" ); // last is RAW - no hash, raw ECDH result
 // c) iterate over found keys to call ECDH derive
 $counter = 0;
 foreach($keychain as $item) {
   $kid = $item['kid'];
-  $is_ecdh = strstr($item['type'], "ECDH") ? true : false; 
-  $is_pkey = strstr($item['type'], "PKEY") ? true : false; 
+  $is_ecdh = strstr($item['type'], "ECDH") ? true : false;
+  $is_pkey = strstr($item['type'], "PKEY") ? true : false;
   $type = false;
   //parse keytype
   $item_type = explode(",",  $item['type']);
   if ($item_type == false) goto print_and_exit; // wtf? this is odd
   $type = $item_type[ count($item_type) - 1];
-  //echo "    Process key type: $type over ECDH:$is_ecdh, PKEY:$is_pkey\n";  
+  //echo "    Process key type: $type over ECDH:$is_ecdh, PKEY:$is_pkey\n";
   if ($is_pkey != true) continue; // process only keys with private key
   // gen access token for that KID
   $token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid");   // more here https://docs.encedo.com/hem-api/reference/api-reference/cryptography-operations/ecdh#required-access-scope
-  if ($token == false) goto print_and_exit;                    // exit on error 
-  // get pubkey assosiatec by keytype and process through all possible algs supported https://docs.encedo.com/hem-api/reference/api-reference/cryptography-operations/ecdh 
+  if ($token == false) goto print_and_exit;                    // exit on error
+  // get pubkey assosiatec by keytype and process through all possible algs supported https://docs.encedo.com/hem-api/reference/api-reference/cryptography-operations/ecdh
   $pubkey = $supported_key_types_ecdh[ $type ];
   foreach( $supported_alg  as $alg) {
     //echo "    alg: $alg  type: $type  pubkey: $pubkey\n";
     // kid & pubkey version
     $post_array = array('kid' => $kid, 'pubkey' => $pubkey );
     if ($alg != "") $post_array['alg'] = $alg;
-    $post_data = json_encode( $post_array );    
+    $post_data = json_encode( $post_array );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
@@ -574,14 +574,14 @@ foreach($keychain as $item) {
     // kid &ext_kid version
     $post_array = array('kid' => $kid, 'ext_kid' => $kid );
     if ($alg != "") $post_array['alg'] = $alg;
-    $post_data = json_encode( $post_array );    
+    $post_data = json_encode( $post_array );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( $ret_stat != 200 ) goto print_and_exit;    //expected is 200 on success
-    //all good, got secret (ECDH result) hashed by ALG 
-    $counter++;    
-  } 
+    //all good, got secret (ECDH result) hashed by ALG
+    $counter++;
+  }
   // DEV-427: ECDH with HKDF - result must equal HKDF over the raw ECDH secret (hkdf_salt, hkdf_ctx = HKDF info, hkdf_len)
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, json_encode(array('kid' => $kid, 'pubkey' => $pubkey)), $token);
@@ -617,12 +617,12 @@ foreach($keychain as $item) {
   if ( ($ret_stat != 200) || (base64_decode($ret_val['ecdh']) !== hash_hkdf('sha256', $z, 0, str_repeat("c", 128), str_repeat("s", 128))) ) { echo "ERROR: ECDH $type HKDF with 128 B salt/ctx\n"; goto print_and_exit; }
   //additional tests - ECDH as a source of secrets for hmac,encryption&wrap
   //reuse code from subtest1,3&4
-  //echo "HMAC - EXT_KID\n";  
+  //echo "HMAC - EXT_KID\n";
   $msg = base64_encode( openssl_random_pseudo_bytes( 64 ) );
   //hash
   $ret_val = false;
   $oper_arg = array('kid' => $kid, 'ext_kid' => $kid, 'msg' => $msg_raw, 'alg' => "SHA2-256");
-  $post_data = json_encode( $oper_arg );    
+  $post_data = json_encode( $oper_arg );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/hash", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC hash generated
@@ -630,7 +630,7 @@ foreach($keychain as $item) {
   // verify mac
   $ret_val = false;
   $oper_arg['mac'] = $mac;
-  $post_data = json_encode( $oper_arg );    
+  $post_data = json_encode( $oper_arg );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/verify", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC verify success
@@ -639,7 +639,7 @@ foreach($keychain as $item) {
   //hash
   $ret_val = false;
   $oper_arg = array('kid' => $kid, 'pubkey' => $pubkey, 'msg' => $msg_raw, 'alg' => "SHA2-256");
-  $post_data = json_encode( $oper_arg );    
+  $post_data = json_encode( $oper_arg );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/hash", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC hash generated
@@ -647,15 +647,15 @@ foreach($keychain as $item) {
   // verify mac
   $ret_val = false;
   $oper_arg['mac'] = $mac;
-  $post_data = json_encode( $oper_arg );    
+  $post_data = json_encode( $oper_arg );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/verify", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC verify success
   //echo "CIPHER - EXT_KID\n";
-  $msg = base64_encode( openssl_random_pseudo_bytes( 100 ) ); //CBC can handle any message size - padding 
+  $msg = base64_encode( openssl_random_pseudo_bytes( 100 ) ); //CBC can handle any message size - padding
   $alg = "AES128-CBC";
   $post_array = array('kid' => $kid, 'ext_kid' => $kid, 'msg' => $msg, 'alg' => $alg);
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/encrypt", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
@@ -665,7 +665,7 @@ foreach($keychain as $item) {
   //try to decrypt the message
   $post_array['msg'] = $ciphertext;
   $post_array['iv'] = $iv;
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/decrypt", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
@@ -674,11 +674,11 @@ foreach($keychain as $item) {
   //compare
   if ($msg != $msg_test) goto print_and_exit;    //expected is 200 on success
   //echo "CIPHER - PUBKEY\n";
-  $msg = base64_encode( openssl_random_pseudo_bytes( 100 ) ); //CBC can handle any message size - padding 
-  $ctx = base64_encode( openssl_random_pseudo_bytes( 8 ) ); 
+  $msg = base64_encode( openssl_random_pseudo_bytes( 100 ) ); //CBC can handle any message size - padding
+  $ctx = base64_encode( openssl_random_pseudo_bytes( 8 ) );
   $alg = "AES128-CBC";
   $post_array = array('kid' => $kid, 'pubkey' => $pubkey, 'msg' => $msg, 'alg' => $alg, 'ctx' => $ctx);
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/encrypt", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
@@ -688,7 +688,7 @@ foreach($keychain as $item) {
   //try to decrypt the message
   $post_array['msg'] = $ciphertext;
   $post_array['iv'] = $iv;
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/decrypt", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
@@ -699,7 +699,7 @@ foreach($keychain as $item) {
   //echo "WRAP - EXT_KID\n";
   $msg = base64_encode( openssl_random_pseudo_bytes( 32 ) ); // example random message to wrap (KEK by NIST)
   $post_array = array('kid' => $kid, 'ext_kid' => $kid, 'alg' => "AES128", 'msg' => $msg);
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/wrap", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
@@ -707,7 +707,7 @@ foreach($keychain as $item) {
   $wrapped = $ret_val['wrapped'];
   //UNWARP
   $post_array['msg'] = $wrapped;
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/unwrap", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
@@ -717,9 +717,9 @@ foreach($keychain as $item) {
   if ($msg != $msg_test) goto print_and_exit;    //expected is equal
   //echo "WRAP - PUBKEY\n";
   $msg = base64_encode( openssl_random_pseudo_bytes( 32 ) ); // example random message to wrap (KEK by NIST)
-  $ctx = base64_encode( openssl_random_pseudo_bytes( 8 ) ); 
+  $ctx = base64_encode( openssl_random_pseudo_bytes( 8 ) );
   $post_array = array('kid' => $kid, 'pubkey' => $pubkey, 'alg' => "AES128", 'msg' => $msg, 'ctx' => $ctx);
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/wrap", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
@@ -727,14 +727,14 @@ foreach($keychain as $item) {
   $wrapped = $ret_val['wrapped'];
   //UNWARP
   $post_array['msg'] = $wrapped;
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/unwrap", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;    //expected is 200 on success
   $msg_test = $ret_val['unwrapped'];
   //compare
-  if ($msg != $msg_test) goto print_and_exit;    //expected is equal  
+  if ($msg != $msg_test) goto print_and_exit;    //expected is equal
 }
 if ($counter != count($supported_alg)*count($keychain)) goto print_and_exit;
 // DEV-422: ED25519 dual-mode key (mode "ECDH,ExDSA") - EdDSA signature and ECDH (Ed25519 key converted to X25519) both work
@@ -788,22 +788,22 @@ $test_cfg['subtests'][6] = 'ERROR';                           // mark this subte
 if (!isset($kid_subtest6a)) goto print_and_exit;
 if (!isset($kid_subtest6b)) goto print_and_exit;
 // b) get access tokens to two KIDs
-$token_a = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid_subtest6a");   
-if ($token_a == false) goto print_and_exit;                    // exit on error 
-$token_b = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid_subtest6b");   
-if ($token_b == false) goto print_and_exit;                    // exit on error 
+$token_a = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid_subtest6a");
+if ($token_a == false) goto print_and_exit;                    // exit on error
+$token_b = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid_subtest6b");
+if ($token_b == false) goto print_and_exit;                    // exit on error
 // c) try to hash using wrong token
-$msg = base64_encode( openssl_random_pseudo_bytes( 64 ) );  
+$msg = base64_encode( openssl_random_pseudo_bytes( 64 ) );
 $ret_val = false;
 $oper_arg = array('kid' => $kid_subtest6a, 'msg' => $msg);
-$post_data = json_encode( $oper_arg );    
+$post_data = json_encode( $oper_arg );
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/hash", $ret_val, $post_data, $token_b);  //wrong token
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 403 ) goto print_and_exit;        // expected is 403 - HMAC hash executed with wrong token
 // d) change token to the right one
 $ret_val = false;
 $oper_arg = array('kid' => $kid_subtest6a, 'msg' => $msg);
-$post_data = json_encode( $oper_arg );    
+$post_data = json_encode( $oper_arg );
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/hash", $ret_val, $post_data, $token_a);  //rigth token
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC hash generated
@@ -840,18 +840,18 @@ if ( $ret_val['fls_state'] != 0 ) goto print_and_exit;     // expected is no fai
 $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");       // token will be needed to reboot
 if ($token == false) goto print_and_exit;                    // exit on error
 // d) try to hash - should succeed
-$msg = base64_encode( openssl_random_pseudo_bytes( 64 ) );  
+$msg = base64_encode( openssl_random_pseudo_bytes( 64 ) );
 $ret_val = false;
 $oper_arg = array('kid' => $kid_subtest6a, 'msg' => $msg);
-$post_data = json_encode( $oper_arg );    
-$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/hash", $ret_val, $post_data, $token_a);  
+$post_data = json_encode( $oper_arg );
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/hash", $ret_val, $post_data, $token_a);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - success
 // e) execute simulated failer
 $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/diag/break_temp", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200 
+if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200
 sleep(2); // wait a while
 // f) check if in failer state is triggered
 $ret_val = false;
@@ -861,8 +861,8 @@ if ( $ret_stat != 200 ) goto print_and_exit;
 if ( $ret_val['fls_state'] == 0 ) goto print_and_exit;     // expected is failer state (non-zero)
 // g) repeat above hash genearion
 $ret_val = false;
-$post_data = json_encode( $oper_arg );    
-$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/hash", $ret_val, $post_data, $token_a);  
+$post_data = json_encode( $oper_arg );
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/hash", $ret_val, $post_data, $token_a);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat == 200 ) goto print_and_exit;        // expected is 409 - FLS.1 involved
 // h) reboot to clear simulated failer state
@@ -871,7 +871,7 @@ $dummy_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $dummy_val, $token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
-sleep(30);  //wait 
+sleep(30);  //wait
 // i) set result
 $test_cfg['subtests'][7] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
@@ -885,7 +885,7 @@ $test_cfg['subtests'][7] = 'OK';                           // mark this subtest 
 TEST8:
 echo "  subtest-8\n";
 $test_cfg['subtests'][8] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
-// a) get TOE status 
+// a) get TOE status
 $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
@@ -893,24 +893,24 @@ if ( $ret_stat != 200 ) goto print_and_exit;
 // b) set RTC clock - code from T-1.3
 $ret = helper_checkin($cfg_domain);
 // c) generate keychain search over pattern keys for ML-KEM operations
-$pattern_plain = "CCTEST:T-10.1_MLKEM";   
+$pattern_plain = "CCTEST:T-10.1_MLKEM";
 $pattern = "^".base64_encode($pattern_plain);  //^ denotes 'begining by following bytes' - like regexpr :)
 $offset = 0;
 $keychain = array();
 do {
   $ret_val = false;
   $post_array = array('descr' => $pattern, 'offset' => $offset );  //^ denotes 'begining by following bytes' - like regexpr :)
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/search", $ret_val, $post_data);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;    //200 if found, 404 if not
   $total = $ret_val['total'];
   $listed = $ret_val['listed'];
-  if ($listed == 0) break;  // go all the keys  
-  foreach($ret_val['list'] as $item) $keychain[] = $item; 
+  if ($listed == 0) break;  // go all the keys
+  foreach($ret_val['list'] as $item) $keychain[] = $item;
   $offset = $offset + $listed;
   if ($offset >= $total) break;
-} while (true);  
+} while (true);
 // d) iterate over found keys to call ML-KEM Encapsulation and the Decapsulation
 //var_dump($keychain);
 $counter = 0;
@@ -918,11 +918,11 @@ foreach($keychain as $item) {
   $kid = $item['kid'];
   // gen access token for that KID
   $token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid");   // more here https://docs.encedo.com/hem-api/reference/api-reference/cryptography-operations/hmac#required-access-scope
-  if ($token == false) goto print_and_exit;                    // exit on error 
+  if ($token == false) goto print_and_exit;                    // exit on error
   // encapsulation
   $ret_val = false;
   $oper_arg = array('kid' => $kid);
-  $post_data = json_encode( $oper_arg );    
+  $post_data = json_encode( $oper_arg );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mlkem/encaps", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC hash generated
@@ -931,7 +931,7 @@ foreach($keychain as $item) {
   // decapsulation
   $ret_val = false;
   $oper_arg = array('kid' => $kid, 'ct' => $ct_encaps);
-  $post_data = json_encode( $oper_arg );    
+  $post_data = json_encode( $oper_arg );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mlkem/decaps", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC verify success
@@ -956,24 +956,24 @@ TEST9:
 echo "  subtest-9\n";
 $test_cfg['subtests'][9] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) generate keychain search over pattern keys for ML-DSA operations
-$pattern_plain = "CCTEST:T-10.1_MLDSA";   
+$pattern_plain = "CCTEST:T-10.1_MLDSA";
 $pattern = "^".base64_encode($pattern_plain);  //^ denotes 'begining by following bytes' - like regexpr :)
 $offset = 0;
 $keychain = array();
 do {
   $ret_val = false;
   $post_array = array('descr' => $pattern, 'offset' => $offset );  //^ denotes 'begining by following bytes' - like regexpr :)
-  $post_data = json_encode( $post_array );    
+  $post_data = json_encode( $post_array );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/search", $ret_val, $post_data);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;    //200 if found, 404 if not
   $total = $ret_val['total'];
   $listed = $ret_val['listed'];
-  if ($listed == 0) break;  // go all the keys  
-  foreach($ret_val['list'] as $item) $keychain[] = $item; 
+  if ($listed == 0) break;  // go all the keys
+  foreach($ret_val['list'] as $item) $keychain[] = $item;
   $offset = $offset + $listed;
   if ($offset >= $total) break;
-} while (true);  
+} while (true);
 // b) iterate over found keys to call ML-DSA Sign & Verification
 //var_dump($keychain);
 $counter = 0;
@@ -981,12 +981,12 @@ foreach($keychain as $item) {
   $kid = $item['kid'];
   // gen access token for that KID
   $token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid");   // more here https://docs.encedo.com/hem-api/reference/api-reference/cryptography-operations/hmac#required-access-scope
-  if ($token == false) goto print_and_exit;                    // exit on error 
+  if ($token == false) goto print_and_exit;                    // exit on error
   // sign
   $msg_raw = base64_encode( openssl_random_pseudo_bytes( 250 ) );    // ranodm bytes of data
   $ret_val = false;
   $oper_arg = array('kid' => $kid, 'msg' => $msg_raw);
-  $post_data = json_encode( $oper_arg );    
+  $post_data = json_encode( $oper_arg );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mldsa/sign", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC hash generated
@@ -994,7 +994,7 @@ foreach($keychain as $item) {
   // verification
   $ret_val = false;
   $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'sign' => $signature);
-  $post_data = json_encode( $oper_arg );    
+  $post_data = json_encode( $oper_arg );
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mldsa/verify", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC verify success
@@ -1029,7 +1029,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 print_and_exit:
   $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
-  print_result( $test_cfg );  
+  print_result( $test_cfg );
   die;
 
 /////////////////////////////////////////////////////////////////////

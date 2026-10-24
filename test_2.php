@@ -67,7 +67,7 @@ if ( !isset($ret_val['status']) ) goto print_and_exit;    // exit as well if mis
 // d) prepare new domain prefix and check availability
 if ($cfg_enforce_ppa_domain == 0) {
   $new_prefix = "cctest" . time();
-} else {   
+} else {
   $new_prefix = 'my';
 }
 $new_fqdn = $new_prefix . ".ence.do";
@@ -178,7 +178,7 @@ if ($cfg_enforce_ppa_domain == 0) {
       if ( $ret_stat == 200 ) break;
       if ( $ret_stat >= 400 ) goto print_and_exit;  // exit on API call FAIL
       sleep(3);
-    } while(true);  
+    } while(true);
     $cert_data = $ret_val;
   } else {
     $cert_data = $ret_val;
@@ -315,7 +315,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 print_and_exit:
   $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
-  print_result( $test_cfg );  
+  print_result( $test_cfg );
   die;
 
 /////////////////////////////////////////////////////////////////////

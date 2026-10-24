@@ -36,7 +36,7 @@ if ( intval($ret_val['fls_state']) !== 0) {
   goto print_and_exit;     // exit as well if prereq not fulfill
 }
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
-  $cfg_domain = $ret_val['hostname'];                      
+  $cfg_domain = $ret_val['hostname'];
 }
 // b) detect, get version details etc
 $ret_val = false;
@@ -84,11 +84,11 @@ do {
   $count++;
   if ($count > 12) break;
   sleep(5);
-} while (true);  
-if ( $ret_stat != 200 ) goto print_and_exit;                 // other result than 200 means no user interaction in time frame 
+} while (true);
+if ( $ret_stat != 200 ) goto print_and_exit;                 // other result than 200 means no user interaction in time frame
 if (isset($ret_val['deny']) ) goto print_and_exit;              // if set user selected DENY on mobile app
 
-$authreply = $ret_val['authreply'];  
+$authreply = $ret_val['authreply'];
 // validate reply and retrieve access token
 $ret_val = false;
 $post_data = json_encode( array('authreply' => $authreply) );
@@ -149,8 +149,8 @@ do {
   $count++;
   if ($count > 12) break;
   sleep(5);
-} while (true);  
-if ( $ret_stat != 200 ) goto print_and_exit;                 // other result than 200 means no user interaction in time frame 
+} while (true);
+if ( $ret_stat != 200 ) goto print_and_exit;                 // other result than 200 means no user interaction in time frame
 if ( !isset($ret_val['deny']) ) goto print_and_exit;         // expect to get DENY
 /*
 NOTE:
@@ -183,7 +183,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 print_and_exit:
   $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
-  print_result( $test_cfg );  
+  print_result( $test_cfg );
   die;
 
 /////////////////////////////////////////////////////////////////////

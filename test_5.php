@@ -36,7 +36,7 @@ if ( intval($ret_val['fls_state']) !== 0) {
   goto print_and_exit;     // exit as well if prereq not fulfill
 }
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
-  $cfg_domain = $ret_val['hostname'];                      
+  $cfg_domain = $ret_val['hostname'];
 }
 // b) detect, get version details etc
 $ret_val = false;
@@ -91,7 +91,7 @@ $qr_data = array( 'link' => $qr_link, 'hash' => $hash, 'user' => $encedo_config[
 $qr_body = json_encode( $qr_data );
 @file_put_contents( __DIR__ . "/out/extauth_exchange.json", json_encode( array('type' => "pair", 'qr' => $qr_data) ) );   // for ExtAuth_Simulator.php (instead of scanning the QR code)
 $google_gen_qr_link = "https://quickchart.io/qr?size=500&text=" . urlencode( $qr_body );
-if ( $cfg_debug ) var_dump( $google_gen_qr_link );     
+if ( $cfg_debug ) var_dump( $google_gen_qr_link );
 //echo "QR code link\n$google_gen_qr_link\n";
 $png = @file_get_contents($google_gen_qr_link);
 $temp_file = tempnam(sys_get_temp_dir(), 'encedo') . '.png';
@@ -99,7 +99,7 @@ file_put_contents($temp_file, $png);
 if (PHP_OS == "WINNT") {
   shell_exec("start $temp_file");
 } else {
-  shell_exec("sudo xdg-open \"$temp_file\" 2>/dev/null 1>/dev/null &");	
+  shell_exec("sudo xdg-open \"$temp_file\" 2>/dev/null 1>/dev/null &");
 }
 // j) wait to user to scan the code - in polling mode
 echo "    scan QR code - got 60sec\n";
@@ -112,9 +112,9 @@ do {
   $count++;
   if ($count > 12) break;
   sleep(5);
-} while (true);  
+} while (true);
 if ( $ret_stat != 200 ) goto print_and_exit;
-$reply = $ret_val;  
+$reply = $ret_val;
 // k) validate raiping at encedo
 $ret_val = false;
 $post_data = json_encode( array('pid' => $reply['pid'], 'reply' => $reply['reply']) );
@@ -228,7 +228,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 print_and_exit:
   $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
-  print_result( $test_cfg );  
+  print_result( $test_cfg );
   die;
 
 /////////////////////////////////////////////////////////////////////

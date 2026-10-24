@@ -13,33 +13,33 @@ $cfg_debug_lib = 0;
 
 function init_env() {
 
-	//gte global variables
-	global $cfg_domain, $cfg_epa_domain, $cfg_ppa_domain, $cfg_tester, $cfg_debug, $cfg_epa_chipid, $argv, $cfg_enforce_ppa_domain;
+  //gte global variables
+  global $cfg_domain, $cfg_epa_domain, $cfg_ppa_domain, $cfg_tester, $cfg_debug, $cfg_epa_chipid, $argv, $cfg_enforce_ppa_domain;
 
-	//set defaults
-	$cfg_domain = $cfg_ppa_domain;
+  //set defaults
+  $cfg_domain = $cfg_ppa_domain;
 
-	//first parse env variables
-	$arg = getenv('EPA');
-	if ($arg != false) {
+  //first parse env variables
+  $arg = getenv('EPA');
+  if ($arg != false) {
     $cfg_domain =  "c$cfg_epa_chipid.$cfg_epa_domain";
-	}
+  }
 
-	$arg = getenv('DEBUG');
-	if ( $arg != false ) {
+  $arg = getenv('DEBUG');
+  if ( $arg != false ) {
     $cfg_debug = intval($arg);
-	}
-	
-	$arg = getenv('TESTER');
-	if (($arg != false) && (is_string($arg))) {
-    $cfg_tester = $arg;
-	}
+  }
 
-	// parse env argument
-	if (isset($argv[1]) && (strtolower($argv[1]) == "epa")) {
+  $arg = getenv('TESTER');
+  if (($arg != false) && (is_string($arg))) {
+    $cfg_tester = $arg;
+  }
+
+  // parse env argument
+  if (isset($argv[1]) && (strtolower($argv[1]) == "epa")) {
     $cfg_domain =  "c$cfg_epa_chipid.$cfg_epa_domain";
     $cfg_enforce_ppa_domain = 0;
-	}
+  }
 }
 
 function parseHeaders( $headers )
@@ -63,7 +63,7 @@ function parseHeaders( $headers )
 function http_transaction($protocol, $method, $domain, $path, &$ret_data = false, &$post_data = false, $token = false, $upload_file = false) {
 
   global $cfg_debug_lib;
-  
+
   if (($protocol !== "http") && ($protocol !== "https")) return false;
   if (($method !== "GET") && ($method !== "POST") && ($method !== "DELETE")) return false;
 
@@ -98,7 +98,7 @@ function http_transaction($protocol, $method, $domain, $path, &$ret_data = false
   if (isset($token) && (strlen($token) > 0) ) {
      $opts['http']['header'] = $opts['http']['header'] . "Authorization: Bearer $token\r\n";
   }
-  
+
   if ($upload_file != false) {
     if ($token != false) {
       $opts['http']['header'] = "Authorization: Bearer $token\r\n" . "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"$upload_file\"\r\n";
@@ -107,14 +107,14 @@ function http_transaction($protocol, $method, $domain, $path, &$ret_data = false
     }
     $opts['http']['timeout'] = 60;
   }
-  
+
   $url = $protocol . "://" . $domain . $path;
 
   if ($cfg_debug_lib) {
     echo "HTTP Transaction: $method $url\n";
     var_dump($opts);
   }
-  
+
   $context = stream_context_create($opts);
   if ($context == false) return false;
   $cont = @file_get_contents($url, false, $context);
@@ -127,20 +127,20 @@ function http_transaction($protocol, $method, $domain, $path, &$ret_data = false
   if (function_exists('http_get_last_response_headers')) {
     $http_response_header = http_get_last_response_headers();
   }
-  
+
   if (!isset($http_response_header) || ($http_response_header == false)) return false;
 
-  $hdrs = parseHeaders($http_response_header);    
+  $hdrs = parseHeaders($http_response_header);
   if ( (isset($hdrs["Content-Length"])) && (intval($hdrs["Content-Length"]) > 0) ) {
     $len = intval($hdrs["Content-Length"]);
     $ret_data = false;
-	  if ($len > 0) {
+    if ($len > 0) {
       if (strstr($hdrs["Content-Type"], "/json")) {
         $ret_data = json_decode($cont, true);
       } else {
         $ret_data = $cont;
       }
-	  }
+    }
   }
 
   if ($cfg_debug_lib) {
@@ -175,7 +175,7 @@ function check_tls($domain) {
 
   if ($client == false) return false;
 
-  return stream_get_meta_data($client)['crypto'];  
+  return stream_get_meta_data($client)['crypto'];
 }
 
 
@@ -186,24 +186,24 @@ function ejwt_generate($body_array, $my_secret_raw, $ext_pubkey_raw) {
     'typ'  => "JWT",
     'ecdh' => "x25519"
   );
-  
+
   $hdr = rtrim( strtr( base64_encode( json_encode($ejwt_hdr) ), '+/', '-_'), '=');      //JWT header
   $bdy = rtrim( strtr( base64_encode( json_encode($body_array) ), '+/', '-_'), '=');    //JWT body
 
   $ejwt = $hdr . "." . $bdy;
-  
+
   $secret = sodium_crypto_scalarmult($my_secret_raw, $ext_pubkey_raw);                      //ECDH secret
   $signature = hash_hmac("sha256", $ejwt, $secret, true);
   $sig = rtrim( strtr( base64_encode( $signature ), '+/', '-_'), '=');                  //JWT signature
-  
+
   $ejwt = $ejwt . "." . $sig;                                                           //final JWT string
-  
+
   return $ejwt;
 }
 
 
 function init_test($test_name, $test_descr, $test_subtest_cnt, $tester) {
-  $_cfg = array( 
+  $_cfg = array(
     'title' => $test_name,
     'descr' => $test_descr,
     'testername' => $tester,
@@ -241,7 +241,7 @@ function formatDuration(int $seconds): string {
 
 
 function print_result($result_array) {
-  
+
   $elapsed      = formatDuration( intval($result_array['elapsed'] / 1000) );
   $test_name    = $result_array['title'];
   $test_descr   = $result_array['descr'];
@@ -274,7 +274,7 @@ function print_result($result_array) {
   }
   printf("*** Test result:   %-37s ***\n", $result);
   printf("************************************************************\n");
-  printf("**********************  END OF TEST  ***********************\n");  
+  printf("**********************  END OF TEST  ***********************\n");
 }
 
 
@@ -300,17 +300,17 @@ function helper_checkin($cfg_domain) {
 
 function helper_authorize($cfg_domain, $password, $scope = "scope", $exp = 3600) {
   global $cfg_debug_lib;
-  
+
   $ret_val = false;
   $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/auth/token", $ret_val);
-  if ($cfg_debug_lib) { 
-    var_dump($ret_stat); 
-    var_dump($ret_val); 
+  if ($cfg_debug_lib) {
+    var_dump($ret_stat);
+    var_dump($ret_val);
   }
   if ( $ret_stat != 200 ) return false;
   $auth_challange = $ret_val;
   //generate authentication kesy based on config constants
-  $salt = $auth_challange['eid']; 
+  $salt = $auth_challange['eid'];
   $user_secret = hash_pbkdf2("sha256", $password, $salt, 600000, 32, true);
   $user_public_key = sodium_crypto_box_publickey_from_secretkey($user_secret);
   if ($cfg_debug_lib) {
@@ -320,7 +320,7 @@ function helper_authorize($cfg_domain, $password, $scope = "scope", $exp = 3600)
   }
   $ext_pubkey = base64_decode($auth_challange['spk']);
   $iat = time() - 5;  //correction for time diff (just in case)
-  $auth_val_user = array(                                 
+  $auth_val_user = array(
     'jti' => $auth_challange['jti'],
     'aud' => $auth_challange['spk'],
     'exp' => $iat + $exp,
@@ -329,15 +329,15 @@ function helper_authorize($cfg_domain, $password, $scope = "scope", $exp = 3600)
     'iss' => base64_encode($user_public_key),
     'scope' => $scope
     );
-  unset($auth_challange);  
+  unset($auth_challange);
   //authentication USER and get token
   $auth_data_user = ejwt_generate($auth_val_user, $user_secret, $ext_pubkey);
   $post_data = json_encode( array('auth' => $auth_data_user) );
   $ret_val = false;
   $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/auth/token", $ret_val, $post_data);
-  if ($cfg_debug_lib) { 
-    var_dump($ret_stat); 
-    var_dump($ret_val); 
+  if ($cfg_debug_lib) {
+    var_dump($ret_stat);
+    var_dump($ret_val);
   }
   if ( $ret_stat != 200 ) return false;
   $user_auth_token = $ret_val['token'];
@@ -368,13 +368,13 @@ function encedo_log_integrity_check($pubkey, $log_array, &$output_log){
   $cnt = 0;
   foreach($log_array as $line) {
     $rec = explode("|", $line);
-    
+
     $cutoff = strrpos($line, '|') +1;
     $msg = substr($line, 0, $cutoff);
     $hmac = substr($line, $cutoff);
-    
+
     if (($rec[2] == 0) && ($rec[3] == 0)) {
-      
+
       if (isset($key)) $key2 = $key;
       $key = base64url_decode( $rec[4] );
       $signa = base64url_decode( $rec[5] );

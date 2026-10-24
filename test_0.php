@@ -39,7 +39,7 @@ if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
 //?if ( isset($ret_val['inited']) ) goto print_and_exit;      // exit as well if prereq not fulfill - dev not inited!
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
-  $cfg_domain = $ret_val['hostname'];                      
+  $cfg_domain = $ret_val['hostname'];
 }
 if ( intval($ret_val['fls_state']) !== 0) {
   echo "ERROR: fls_state !=0, is " . $ret_val['fls_state'] . "\r\n";
@@ -61,7 +61,7 @@ $test_cfg['subtests'][2] = 'ERROR';                        // mark this subtest 
 // a) check if TLS is available
 if ( !isset($toe_status['https']) ) goto print_and_exit;  // exit if HTTPS (TLS) is not operating
 
-// b) 
+// b)
 $time_start = microtime(true);
 $probe_size = 100;
 $count = $probe_size;
@@ -103,7 +103,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 print_and_exit:
   $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
-  print_result( $test_cfg );  
+  print_result( $test_cfg );
   die;
 
 /////////////////////////////////////////////////////////////////////

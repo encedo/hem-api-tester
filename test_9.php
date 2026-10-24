@@ -38,7 +38,7 @@ if ( intval($ret_val['fls_state']) !== 0) {
   goto print_and_exit;     // exit as well if prereq not fulfill
 }
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
-  $cfg_domain = $ret_val['hostname'];                      
+  $cfg_domain = $ret_val['hostname'];
 }
 // b) detect, get version details etc
 $ret_val = false;
@@ -79,31 +79,31 @@ if ( strstr($test_cfg['conf'], "PPA") ) {
   $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/logger/list/0", $ret_val, $dummy_val, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
-  $log_list_0 = $ret_val;  
+  $log_list_0 = $ret_val;
   //b) reboot
-  $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");  
+  $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
   if ($token == false) goto print_and_exit;                    // exit on error
   $ret_val = false;
   $dummy_val = false;
   $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $dummy_val, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
-  sleep(60);  //wait 
+  sleep(60);  //wait
   //c) new log, new authentication
   $ret = helper_checkin($cfg_domain);
   if ($ret == false) goto print_and_exit;                     // exit on error
-  $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");  
+  $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
   if ($token == false) goto print_and_exit;                    // exit on error
   $ret_val = false;
   $dummy_val = false;
   $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $dummy_val, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
-  sleep(60);  //wait 
+  sleep(60);  //wait
   //d) new log, new authentication
   $ret = helper_checkin($cfg_domain);
   if ($ret == false) goto print_and_exit;                     // exit on error
-  $token = helper_authorize($cfg_domain, $cfg_passpharse, "logger:get");   
+  $token = helper_authorize($cfg_domain, $cfg_passpharse, "logger:get");
   if ($token == false) goto print_and_exit;                    // exit on error
   //echo "    Token: $token\n";
   $ret_val = false;
@@ -124,11 +124,11 @@ if ( strstr($test_cfg['conf'], "PPA") ) {
     $split = explode("|", $line);
     $x = count($split);
     if ($x == 7) $log[] = $line;  //log entries has always 7 fields
-  }    
+  }
 } else {
   // this is code for Encedo EPA
   //a) reboot
-  $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");  
+  $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
   if ($token == false) goto print_and_exit;                    // exit on error
   $ts = time(); //get timestamp anchor
   $ret_val = false;
@@ -136,24 +136,24 @@ if ( strstr($test_cfg['conf'], "PPA") ) {
   $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $dummy_val, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
-  sleep(30);  //wait 
+  sleep(30);  //wait
 
   //b) new log begin - make some entries
   $ret = helper_checkin($cfg_domain);
   if ($ret == false) goto print_and_exit;                     // exit on error
-  $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");  
+  $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
   if ($token == false) goto print_and_exit;                    // exit on error
   $ret_val = false;
   $dummy_val = false;
   $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $dummy_val, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
-  sleep(30);  //wait 
+  sleep(30);  //wait
   //c) get log from external logserver (last N second of log entries) - encedo backend API
   $ret_val = false;
   $now = time();
   $last = $now - $ts + 1;
-  //echo "s: $ts  now:$now  last:$last\n";  
+  //echo "s: $ts  now:$now  last:$last\n";
   $ret_stat = http_transaction("https", "GET", "api.encedo.com", "/cctest/getmqttlog/$hem/$authkey/$last", $ret_val);
   if ($ret_stat != 200) goto print_and_exit;                   // non 200 measn error getting/downloadin log entries from MQTT syslog server
   $log = $ret_val;
@@ -172,7 +172,7 @@ $test_cfg['subtests'][1] = 'OK';                              // mark this subte
 TEST2:
 echo "  subtest-2\n";
 $test_cfg['subtests'][2] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
-// a) set RTC clock 
+// a) set RTC clock
 $ret = helper_checkin($cfg_domain);
 if ($ret == false) goto print_and_exit;                     // exit on error
 // b) perform local USER authentication
@@ -220,7 +220,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 print_and_exit:
   $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
-  print_result( $test_cfg );  
+  print_result( $test_cfg );
   die;
 
 /////////////////////////////////////////////////////////////////////

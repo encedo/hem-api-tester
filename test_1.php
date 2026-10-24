@@ -142,16 +142,16 @@ $test_cfg['subtests'][4] = 'OK';                           // mark this subtest 
 TEST5:
 echo "  subtest-5\n";
 $test_cfg['subtests'][5] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
-// a) call TOE /checkin API with malformated JSON string 
+// a) call TOE /checkin API with malformated JSON string
 $post_data = '{"checked":"somedata"';                       // malformated JSON string - missing closing '}'
 $ret_val = false;
 $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/checkin", $ret_val, $post_data);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 400 ) goto print_and_exit;               // expected 400 - "Bad Request"
-// b) call TOE /checkin API with too long JSON string 
+// b) call TOE /checkin API with too long JSON string
 $post_data = '{"checked":"somedata';                        //JSON opening
 $y = 7300 - (strlen($post_data) + 2);                       // max POSTed body size is 7300bytes (5x1460 a'ka 5*MTU)
-for ($x=0; $x < $y+1; $x++) 
+for ($x=0; $x < $y+1; $x++)
    $post_data = $post_data . chr(rand(65, 90));             // random chars 'A' - 'Z'
 $post_data = $post_data . '"}';                             // closing - it is a correct JSON but way too long
 $ret_val = false;                                           // post_data string is 1bytes too long now
@@ -256,7 +256,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 print_and_exit:
   $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
-  print_result( $test_cfg );  
+  print_result( $test_cfg );
   die;
 
 /////////////////////////////////////////////////////////////////////
