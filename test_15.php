@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 11;
+$test_subtest_cnt = 12;
 
 
 // initialize the execution env
@@ -403,6 +403,54 @@ $test_cfg['subtests'][10] = 'OK';                             // mark this subte
 TEST11:
 echo "  subtest-11\n";
 $test_cfg['subtests'][11] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) AES decryption needs the IV for CBC and GCM and the tag for GCM (DEV-438 phase 2 group 3: CBC used a zero IV)
+$ret_val = false;
+$post_data = json_encode( array('label' => "T-15 AES2 $run", 'type' => "AES256", 'descr' => base64_encode("CCTEST:T-15_AES2")) );
+if ( http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_gen) != 200 ) goto print_and_exit;
+$kid_aes = $ret_val['kid'];
+$token_aes = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid_aes");
+if ($token_aes == false) goto print_and_exit;
+$cases = array();
+foreach (array("AES256-CBC" => "iv", "AES256-GCM" => "tag") as $alg => $drop) {
+  $ret_val = false;
+  $post_data = json_encode( array('kid' => $kid_aes, 'msg' => base64_encode(openssl_random_pseudo_bytes(32)), 'alg' => $alg) );
+  if ( http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/encrypt", $ret_val, $post_data, $token_aes) != 200 ) goto print_and_exit;
+  $arg = array('kid' => $kid_aes, 'msg' => $ret_val['ciphertext'], 'alg' => $alg);
+  if ( isset($ret_val['iv']) ) $arg['iv'] = $ret_val['iv'];
+  if ( isset($ret_val['tag']) ) $arg['tag'] = $ret_val['tag'];
+  unset($arg[$drop]);
+  $ret_val = false;
+  $post_data = json_encode($arg);
+  $cases[] = array("cipher/decrypt $alg without $drop", http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/decrypt", $ret_val, $post_data, $token_aes), 400);
+}
+if ( !check_cases($cases) ) goto print_and_exit;
+// b) remote authentication (ext/token): failed attempts are answered after at least 500 ms, from the 4th one after 1500 ms
+//    (DEV-438 phase 2 group 3: the delay guard was inverted - no delay, no count)
+$times = array();
+for ($i = 0; $i < 5; $i++) {
+  $t0 = hrtime(true);
+  $ret_val = false;
+  $post_data = json_encode( array('authreply' => "eyJhbGciOiJIUzI1NiJ9.e30.AAAA") );
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/token", $ret_val, $post_data);
+  $times[] = intval((hrtime(true) - $t0) / 1000000);
+  if ( $ret_stat != 401 ) { echo "    ext/token with an invalid authreply: HTTP $ret_stat, expected 401\n"; goto print_and_exit; }
+}
+if ( ($times[0] < 450) || ($times[4] < 1400) ) { echo "    ext/token failure delays (ms): " . implode(", ", $times) . " - expected >= 500, from the 4th >= 1500\n"; goto print_and_exit; }
+sleep(16);                                                   // let the failure counter expire (15 s lockdown window)
+if ( !check_alive($uptime) ) goto print_and_exit;
+// c) set result
+$test_cfg['subtests'][11] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 12       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST12:
+echo "  subtest-12\n";
+$test_cfg['subtests'][12] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) service wipe to the factory default (DEV-438): an unknown wipeout value is refused; "factory" wipes the TOE and formats
 //    the internal disk - the TOE comes back not initialised and without the TLS files of the previous owner, so HTTPS does
 //    not start (after a classic wipe it starts with /tmp/tls.json). Runs last - the TOE has to be initialised again (T-2).
@@ -426,7 +474,7 @@ $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);
 if ( ($ret_stat != 200) || !isset($ret_val['inited']) || ($ret_val['https'] != false) ) { echo "    after the factory wipe: " . json_encode($ret_val) . "\n"; goto print_and_exit; }
 // b) set result
-$test_cfg['subtests'][11] = 'OK';                             // mark this subtest as OK
+$test_cfg['subtests'][12] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////

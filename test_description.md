@@ -2,7 +2,7 @@
 
 What every test checks, its subtests, the options and cases tried and the HEM endpoints it calls. Generated from the test code; keep it in sync when a test changes.
 
-**Typical order:** `wipeout.php` (back to the uninitialised state), T-1, T-2 (initialisation), then T-3 ... T-15. T-1 needs TLS: after a classic wipe the TOE uses /tmp/tls.json from an earlier initialisation; after the factory default (T-15.11, `wipeout.php factory`) there is none, so run T-2 first. T-11 needs the keys created by T-10. T-5 and T-6 need the Encedo authenticator app or `ExtAuth_Simulator.php` (see README). T-7 and T-8 are interactive. Subtests that use `/api/diag/...` need a DIAG build; on a build without DIAG they are reported as `SKIPPED (no DIAG)` and count as passed.
+**Typical order:** `wipeout.php` (back to the uninitialised state), T-1, T-2 (initialisation), then T-3 ... T-15. T-1 needs TLS: after a classic wipe the TOE uses /tmp/tls.json from an earlier initialisation; after the factory default (T-15.12, `wipeout.php factory`) there is none, so run T-2 first. T-11 needs the keys created by T-10. T-5 and T-6 need the Encedo authenticator app or `ExtAuth_Simulator.php` (see README). T-7 and T-8 are interactive. Subtests that use `/api/diag/...` need a DIAG build; on a build without DIAG they are reported as `SKIPPED (no DIAG)` and count as passed.
 
 **Status codes:** as in the HEM API docs (general information, response codes): 400 input validation, 401 token, 403 access scope, 404 path, 406 operation failed, 409 internal state, 411/413 protocol, 418 TLS required.
 
@@ -256,7 +256,7 @@ Checks that `/api/keymgmt/derive` can be reproduced off the device. Z = ECDH(loc
 
 ## T-15 — Input validation and robustness
 
-**File:** `test_15.php` · **Subtests:** 11 · **Preconditions:** device initialised, FW with the DEV-438 fixes, internet access to api.encedo.com (checkin), TLS 1.3 to the device with a trusted certificate (raw requests)
+**File:** `test_15.php` · **Subtests:** 12 · **Preconditions:** device initialised, FW with the DEV-438 fixes, internet access to api.encedo.com (checkin), TLS 1.3 to the device with a trusted certificate (raw requests)
 
 Sends malformed input (DEV-438) and checks that each case gets the expected error code. After every subtest it checks that the device still answers and did not restart: `uptime` in `/api/system/status` must not go down (`check_alive`). It covers HTTP body framing, KID format, base64 padding, auth JWT claims, AES-CBC around the block size, an undecryptable TLS key in the config, and malformed ExtAuth sealed scopes and pid lengths.
 
@@ -272,7 +272,8 @@ Sends malformed input (DEV-438) and checks that each case gets the expected erro
 | 15.8 | HTTP header case | `content-type: Application/JSON` + `CONTENT-LENGTH` on POST /api/auth/token with `{}`; `authorization: bearer <token>` on GET /api/system/config; `Connection: Keep-Alive, TE` then a second request on the same TLS connection | 400 (JSON, not an upload); 200; both 200; device alive |
 | 15.9 | Token scope, upload, disk size (DEV-438 phase 2 group 1) | token requested without a scope on POST /api/auth/ext/init and GET /api/system/config; POST /api/system/upgrade/upload_fw with x.txt and with Content-Length 3 MiB; storage_disk0size read and written back, 0 and -5 | 403, 403; 400, 413; written back = no change; 400, 400; device alive |
 | 15.10 | Derive input decoding (DEV-438 phase 2 group 2) | POST /api/keymgmt/derive with a valid request, a descr of 5 characters and a pubkey of 43 characters (pass the character check, do not decode) | 200; 400; 400 (was 406) |
-| 15.11 | Factory default (service wipe) | POST config `{"wipeout":"nonsense"}`; `{"wipeout":"factory"}` over http; wait for the reboot | 406; 200; TOE back not initialised and HTTPS not started (internal disk formatted - no /tmp/tls.json). **Runs last: the TOE has to be initialised again with T-2 (T-1 needs TLS)** |
+| 15.11 | Decrypt IV/tag, remote auth delay (DEV-438 phase 2 group 3) | AES256-CBC decrypt without iv, AES256-GCM decrypt without tag; 5 POST /api/auth/ext/token with an invalid authreply, timed | 400, 400 (CBC used a zero IV before); 401 each, first >= 500 ms, 5th >= 1500 ms; 16 s pause for the counter |
+| 15.12 | Factory default (service wipe) | POST config `{"wipeout":"nonsense"}`; `{"wipeout":"factory"}` over http; wait for the reboot | 406; 200; TOE back not initialised and HTTPS not started (internal disk formatted - no /tmp/tls.json). **Runs last: the TOE has to be initialised again with T-2 (T-1 needs TLS)** |
 
 **Endpoints:** `GET /api/system/status` (http), `GET /api/system/version` (https), `GET /api/system/checkin` (http), `POST https://api.encedo.com/checkin`, `POST /api/system/checkin` (http), `GET /api/auth/token` + `POST /api/auth/token` (http, helper_authorize and auth_with_claims), `POST /api/auth/token` (raw https), `POST /api/keymgmt/update`, `POST /api/crypto/hmac/hash`, `POST /api/keymgmt/import`, `POST /api/keymgmt/create`, `POST /api/crypto/cipher/encrypt`, `POST /api/crypto/cipher/decrypt`, `POST /api/system/config`, `POST /api/auth/ext/init`, `POST /api/auth/ext/validate`, `POST /api/auth/ext/request`, `POST /api/auth/ext/token` (all https unless stated otherwise)
 
