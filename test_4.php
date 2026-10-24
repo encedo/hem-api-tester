@@ -260,22 +260,30 @@ $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/diag/break_temp", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200 - all good, FLS.1 triggered
-sleep(3);
+// the self-test sets the failure state asynchronously - poll up to 10 s; the checks are evaluated after the reboot
+$fls_ok = false;
+for ($i = 0; $i < 10; $i++) {
+  sleep(1);
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val);
+  if ( ($ret_stat == 200) && ($ret_val['fls_state'] != 0) ) { $fls_ok = true; break; }
+}
 //d) re-read config - should failed
-if ( strstr($test_cfg['conf'], "PPA") ) {
+if ( $fls_ok && strstr($test_cfg['conf'], "PPA") ) {
   $ret_val = false;
   $not_used = false;    //dummy
   $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config/attestation", $ret_val, $not_used, $token);
   //var_dump($ret_stat);
   if ( $cfg_debug ) var_dump( $ret_val );
-  if ( $ret_stat != 409 ) goto print_and_exit;                //expected is 409 - failer state
+  if ( $ret_stat != 409 ) $fls_ok = false;                    //expected is 409 - failer state
 }
-//e) reboot TOE to clear failer state - only possible way
+//e) reboot TOE to clear failer state - only possible way; always, so a failed check does not leave the device in FLS
 $ret_val = false;
 $not_used = false;    //dummy
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $not_used, $token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200 - all good
+if ( !$fls_ok ) goto print_and_exit;                        // failure state not entered or the request not refused with 409
 // d) set result
 $test_cfg['subtests'][4] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////

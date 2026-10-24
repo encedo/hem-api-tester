@@ -121,6 +121,21 @@ $init_val = array(                                 //compose TOE req init data
       'origin' => "*"
       )
   );
+// f2) invalid initialization data is refused and the TOE stays not initialised (DEV-438): master key shorter than
+//     32 bytes, netmask prefix out of range (PPA)
+$bad_cfgs = array( array('masterkey' => base64_encode(substr($admin_public_key, 0, 31))) );
+if ( $test_cfg['conf'] == "ENCEDO PPA" ) {
+  $bad_cfgs[] = array('ip' => "192.168.7.1/33");
+  $bad_cfgs[] = array('ip' => "192.168.7.1/-1");
+}
+foreach ($bad_cfgs as $bad) {
+  $bad_val = $init_val;
+  $bad_val['cfg'] = array_merge($init_val['cfg'], $bad);
+  $post_data = json_encode( array('init' => ejwt_generate($bad_val, $admin_secret, $ext_pubkey)) );
+  $ret_val = false;
+  $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/auth/init", $ret_val, $post_data);
+  if ( $ret_stat != 400 ) { echo "    init with " . json_encode($bad) . ": HTTP $ret_stat, expected 400\n"; goto print_and_exit; }
+}
 $init_data = ejwt_generate($init_val, $admin_secret, $ext_pubkey);
 // g) post initialization data by calling TOE/HEM API
 $post_data = json_encode( array('init' => $init_data) );

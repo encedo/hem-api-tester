@@ -828,27 +828,32 @@ $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/diag/break_temp", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200
-sleep(1);
-// c) check if in failer state
-$ret_val = false;
-$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val);
-if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 200 ) goto print_and_exit;
-if ( $ret_val['fls_state'] == 0 ) goto print_and_exit;     // expected is failer state (non-zero)
+// c) check if in failer state - set asynchronously by the self-test, poll up to 10 s; evaluated after the reboot
+$fls_ok = false;
+for ($i = 0; $i < 10; $i++) {
+  sleep(1);
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( ($ret_stat == 200) && ($ret_val['fls_state'] != 0) ) { $fls_ok = true; break; }     // expected is failer state (non-zero)
+}
 // d) try to creat a key
-$keycreate_arg = array('label' => "T-10.8 test key", 'type' => "CURVE25519");
-$ret_val = false;
-$post_data = json_encode($keycreate_arg);
-$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_keygen);
-if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 409 ) goto print_and_exit;                // expected is ERROR (409 as FLS.1 is triggered)
-// e) reboot to clear simulated failer state
+if ( $fls_ok ) {
+  $keycreate_arg = array('label' => "T-10.8 test key", 'type' => "CURVE25519");
+  $ret_val = false;
+  $post_data = json_encode($keycreate_arg);
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_keygen);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 409 ) $fls_ok = false;                    // expected is ERROR (409 as FLS.1 is triggered)
+}
+// e) reboot to clear simulated failer state - always, so a failed check does not leave the device in FLS
 $ret_val = false;
 $dummy_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $dummy_val, $token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
 sleep(10);  //wait
+if ( !$fls_ok ) goto print_and_exit;                        // failure state not entered or the request not refused with 409
 // f) set result
 $test_cfg['subtests'][8] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////

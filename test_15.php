@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 8;
+$test_subtest_cnt = 9;
 
 
 // initialize the execution env
@@ -301,6 +301,8 @@ $test_cfg['subtests'][8] = 'ERROR';                           // mark this subte
 $cases = array();
 // media type in capitals: still a JSON request (not an upload), so the empty JSON body is a validation error
 $cases[] = array("content-type: Application/JSON, CONTENT-LENGTH", raw_https_request($cfg_domain, "POST /api/auth/token HTTP/1.1\r\nhost: $cfg_domain\r\ncontent-type: Application/JSON\r\nCONTENT-LENGTH: 2\r\nConnection: close\r\n\r\n{}"), 400);
+// media type with parameters (RFC 9110 8.3): still JSON
+$cases[] = array("Content-Type: application/json; Charset=UTF-8", raw_https_request($cfg_domain, "POST /api/auth/token HTTP/1.1\r\nHost: $cfg_domain\r\nContent-Type: application/json; Charset=UTF-8\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"), 400);
 // header name and auth scheme in lower case
 $cases[] = array("authorization: bearer <token>", raw_https_request($cfg_domain, "GET /api/system/config HTTP/1.1\r\nHost: $cfg_domain\r\nauthorization: bearer $token_cfg\r\nConnection: close\r\n\r\n"), 200);
 // Connection is a token list in any case: the connection stays open for a second request
@@ -312,6 +314,51 @@ if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // b) set result
 $test_cfg['subtests'][8] = 'OK';                              // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 9        ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST9:
+echo "  subtest-9\n";
+$test_cfg['subtests'][9] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) a token requested without a scope gets an empty scope and is refused by scoped endpoints (DEV-438: was a crash)
+$cases = array();
+$token_noscope = helper_authorize($cfg_domain, $cfg_passpharse, "");
+if ($token_noscope == false) goto print_and_exit;
+$ret_val = false;
+$post_data = json_encode( array('epk' => base64_encode(sodium_crypto_scalarmult_base(random_bytes(32)))) );
+$cases[] = array("ext/init with a token without scope", http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $post_data, $token_noscope), 403);
+$ret_val = false;
+$not_used = false;
+$cases[] = array("GET config with a token without scope", http_transaction("https", "GET", $cfg_domain, "/api/system/config", $ret_val, $not_used, $token_noscope), 403);
+// b) firmware upload: a wrong extension and a file of 3 MiB or more are answered (DEV-438: was no response at all)
+$token_upg = helper_authorize($cfg_domain, $cfg_passpharse, "system:upgrade");
+if ($token_upg == false) goto print_and_exit;
+$cases[] = array("upload_fw, name x.txt", raw_https_request($cfg_domain, "POST /api/system/upgrade/upload_fw HTTP/1.1\r\nHost: $cfg_domain\r\nAuthorization: Bearer $token_upg\r\nContent-Disposition: attachment; filename=\"x.txt\"\r\nContent-Length: 10\r\nConnection: close\r\n\r\n0123456789"), 400);
+$cases[] = array("upload_fw, 3 MiB (body not sent)", raw_https_request($cfg_domain, "POST /api/system/upgrade/upload_fw HTTP/1.1\r\nHost: $cfg_domain\r\nAuthorization: Bearer $token_upg\r\nContent-Disposition: attachment; filename=\"fw.bin\"\r\nContent-Length: 3145728\r\nConnection: close\r\n\r\n"), 413);
+// c) storage_disk0size: the value read can be written back unchanged; 0 and negative values are refused (DEV-438)
+$ret_val = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config", $ret_val, $not_used, $token_cfg);
+if ( $ret_stat != 200 ) goto print_and_exit;
+$disk0size = $ret_val['storage_disk0size'];
+$ret_val = false;
+$post_data = json_encode( array('storage_disk0size' => $disk0size) );
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token_cfg);
+$cases[] = array("config storage_disk0size written back unchanged", $ret_stat, 200);
+if ( ($ret_stat == 200) && ((@$ret_val['updated'] == true) || isset($ret_val['reboot_required'])) ) { echo "    storage_disk0size written back: reported as a change\n"; goto print_and_exit; }
+foreach (array(0, -5) as $v) {
+  $ret_val = false;
+  $post_data = json_encode( array('storage_disk0size' => $v) );
+  $cases[] = array("config storage_disk0size $v", http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token_cfg), 400);
+}
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// d) set result
+$test_cfg['subtests'][9] = 'OK';                              // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////

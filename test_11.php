@@ -852,26 +852,31 @@ $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/diag/break_temp", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200
-sleep(2); // wait a while
-// f) check if in failer state is triggered
-$ret_val = false;
-$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val);
-if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 200 ) goto print_and_exit;
-if ( $ret_val['fls_state'] == 0 ) goto print_and_exit;     // expected is failer state (non-zero)
+// f) check if in failer state is triggered - set asynchronously by the self-test, poll up to 10 s; evaluated after the reboot
+$fls_ok = false;
+for ($i = 0; $i < 10; $i++) {
+  sleep(1);
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( ($ret_stat == 200) && ($ret_val['fls_state'] != 0) ) { $fls_ok = true; break; }     // expected is failer state (non-zero)
+}
 // g) repeat above hash genearion
-$ret_val = false;
-$post_data = json_encode( $oper_arg );
-$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/hash", $ret_val, $post_data, $token_a);
-if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 409 ) goto print_and_exit;        // expected is 409 - FLS.1 involved
-// h) reboot to clear simulated failer state
+if ( $fls_ok ) {
+  $ret_val = false;
+  $post_data = json_encode( $oper_arg );
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/hash", $ret_val, $post_data, $token_a);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 409 ) $fls_ok = false;          // expected is 409 - FLS.1 involved
+}
+// h) reboot to clear simulated failer state - always, so a failed check does not leave the device in FLS
 $ret_val = false;
 $dummy_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $dummy_val, $token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
 sleep(30);  //wait
+if ( !$fls_ok ) goto print_and_exit;                        // failure state not entered or the request not refused with 409
 // i) set result
 $test_cfg['subtests'][7] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
