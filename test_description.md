@@ -2,7 +2,7 @@
 
 What every test checks, its subtests, the options and cases tried and the HEM endpoints it calls. Generated from the test code; keep it in sync when a test changes.
 
-**Typical order:** `wipeout.php` (back to the uninitialised state), T-1, T-2 (initialisation), then T-3 ... T-15. T-1 needs TLS: after a classic wipe the TOE uses /tmp/tls.json from an earlier initialisation; after the factory default (T-15.13, `wipeout.php factory`) there is none, so run T-2 first. T-11 needs the keys created by T-10. T-5 and T-6 need the Encedo authenticator app or `ExtAuth_Simulator.php` (see README). T-7 and T-8 are interactive. Subtests that use `/api/diag/...` need a DIAG build; on a build without DIAG they are reported as `SKIPPED (no DIAG)` and count as passed.
+**Typical order:** `wipeout.php` (back to the uninitialised state), T-2 (initialisation), T-1, then T-3 ... T-15. T-1 needs TLS: a wipe (classic or factory default, T-15.13 / `wipeout.php factory`) leaves no TLS of the previous owner (the wipe empties /tmp, /x509 and /app of the internal disk), so run T-2 first. T-11 needs the keys created by T-10. T-5 and T-6 need the Encedo authenticator app or `ExtAuth_Simulator.php` (see README). T-7 and T-8 are interactive. Subtests that use `/api/diag/...` need a DIAG build; on a build without DIAG they are reported as `SKIPPED (no DIAG)` and count as passed.
 
 **Status codes:** as in the HEM API docs (general information, response codes): 400 input validation, 401 token, 403 access scope, 404 path, 406 operation failed, 409 internal state, 411/413 protocol, 418 TLS required.
 

@@ -526,7 +526,7 @@ echo "  subtest-13\n";
 $test_cfg['subtests'][13] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) service wipe to the factory default (DEV-438): an unknown wipeout value is refused; "factory" wipes the TOE and formats
 //    the internal disk - the TOE comes back not initialised and without the TLS files of the previous owner, so HTTPS does
-//    not start (after a classic wipe it starts with /tmp/tls.json). Runs last - the TOE has to be initialised again (T-2).
+//    not start (a classic wipe empties /tmp as well, the UI stays). Runs last - the TOE has to be initialised again (T-2).
 $ret_val = false;
 $post_data = json_encode( array('wipeout' => "nonsense") );
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token_cfg);
