@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 10;
+$test_subtest_cnt = 11;
 
 
 // initialize the execution env
@@ -370,6 +370,39 @@ $test_cfg['subtests'][9] = 'OK';                              // mark this subte
 TEST10:
 echo "  subtest-10\n";
 $test_cfg['subtests'][10] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) key derivation with a descr or a peer public key that passes the character check but does not decode is refused as
+//    input (DEV-438 phase 2 group 2: the descr was dropped / the derive ran on partly decoded bytes, then 406)
+$token_gen = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:gen");
+$token_der = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:derive");
+if (($token_gen == false) || ($token_der == false)) goto print_and_exit;
+$ret_val = false;
+$post_data = json_encode( array('label' => "T-15 derive $run", 'type' => "CURVE25519", 'mode' => "ECDH", 'descr' => base64_encode("CCTEST:T-15_derive")) );
+if ( http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_gen) != 200 ) goto print_and_exit;
+$kid_ecdh = $ret_val['kid'];
+$peer = base64_encode(sodium_crypto_scalarmult_base(random_bytes(32)));
+$cases = array();
+foreach (array("valid (reference)" => array($peer, base64_encode("CCTEST:T-15"), 200),
+               "descr of 5 characters" => array($peer, "QUJDR", 400),
+               "pubkey of 43 characters" => array(substr($peer, 0, 43), base64_encode("CCTEST:T-15"), 400)) as $name => $v) {
+  $ret_val = false;
+  $post_data = json_encode( array('kid' => $kid_ecdh, 'label' => "T-15 d " . bin2hex(openssl_random_pseudo_bytes(3)), 'type' => "AES256", 'pubkey' => $v[0], 'descr' => $v[1]) );
+  $cases[] = array("keymgmt/derive, $name", http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/derive", $ret_val, $post_data, $token_der), $v[2]);
+}
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// b) set result
+$test_cfg['subtests'][10] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 11       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST11:
+echo "  subtest-11\n";
+$test_cfg['subtests'][11] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) service wipe to the factory default (DEV-438): an unknown wipeout value is refused; "factory" wipes the TOE and formats
 //    the internal disk - the TOE comes back not initialised and without the TLS files of the previous owner, so HTTPS does
 //    not start (after a classic wipe it starts with /tmp/tls.json). Runs last - the TOE has to be initialised again (T-2).
@@ -393,7 +426,7 @@ $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);
 if ( ($ret_stat != 200) || !isset($ret_val['inited']) || ($ret_val['https'] != false) ) { echo "    after the factory wipe: " . json_encode($ret_val) . "\n"; goto print_and_exit; }
 // b) set result
-$test_cfg['subtests'][10] = 'OK';                             // mark this subtest as OK
+$test_cfg['subtests'][11] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
