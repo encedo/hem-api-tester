@@ -89,6 +89,7 @@ $qr_link = $ret_val['link'];
 $hash = base64_encode( hash('sha256', $auth_challange['request'], true) );   // base64(SHA-256(request)) - checked by authenticator v2
 $qr_data = array( 'link' => $qr_link, 'hash' => $hash, 'user' => $encedo_config['user'], 'email' => $encedo_config['email'], 'hostname' => $encedo_config['hostname']);
 $qr_body = json_encode( $qr_data );
+@file_put_contents( __DIR__ . "/out/extauth_exchange.json", json_encode( array('type' => "pair", 'qr' => $qr_data) ) );   // for ExtAuth_Simulator.php (instead of scanning the QR code)
 $google_gen_qr_link = "https://quickchart.io/qr?size=500&text=" . urlencode( $qr_body );
 if ( $cfg_debug ) var_dump( $google_gen_qr_link );     
 //echo "QR code link\n$google_gen_qr_link\n";

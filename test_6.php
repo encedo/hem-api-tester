@@ -73,6 +73,7 @@ $ret_stat = http_transaction("https", "POST", "api.encedo.com", "/notify/event/n
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
 $eventid = $ret_val['eventid'];
+@file_put_contents( __DIR__ . "/out/extauth_exchange.json", json_encode( array('type' => "event", 'eventid' => $eventid, 'expect' => "allow") ) );   // for ExtAuth_Simulator.php
 echo "    check mobile app for notification - got 60sec\n";
 $count = 0;
 do {
@@ -137,6 +138,7 @@ $ret_stat = http_transaction("https", "POST", "api.encedo.com", "/notify/event/n
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
 $eventid = $ret_val['eventid'];
+@file_put_contents( __DIR__ . "/out/extauth_exchange.json", json_encode( array('type' => "event", 'eventid' => $eventid, 'expect' => "deny") ) );   // for ExtAuth_Simulator.php
 echo "    check mobile app for notification - got 60sec\n";
 $count = 0;
 do {
