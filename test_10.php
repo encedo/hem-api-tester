@@ -265,9 +265,9 @@ if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                // expected is 200 (OK)
 $kid_ed = $ret_val['kid'];
 $derive_cases = array(      // name, request fields, expected HTTP status
-  array("no salt",          array('type' => "SECP256R1", 'pubkey' => $pub_p256), 406),                       // same input as i) - deterministic, duplicate
+  array("no salt",          array('type' => "SECP256R1", 'pubkey' => $pub_p256), 409),                       // same input as i) - deterministic, duplicate
   array("salt",             array('type' => "SECP256R1", 'pubkey' => $pub_p256, 'hkdf_salt' => $salt), 200), // salt changes the key
-  array("salt again",       array('type' => "SECP256R1", 'pubkey' => $pub_p256, 'hkdf_salt' => $salt), 406), // deterministic with salt
+  array("salt again",       array('type' => "SECP256R1", 'pubkey' => $pub_p256, 'hkdf_salt' => $salt), 409), // deterministic with salt
   array("ext_kid",          array('type' => "AES256", 'ext_kid' => $kid_p256), 200),                         // peer key from the repo
   array("ED25519 main",     array('kid' => $kid_ed, 'type' => "AES256", 'pubkey' => $pub_x25519), 200),
   array("ED25519 ext_kid",  array('kid' => $kid_ed, 'type' => "AES128", 'ext_kid' => array_search("CURVE25519", $ecdh_kids)), 200),

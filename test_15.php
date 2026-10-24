@@ -482,7 +482,8 @@ foreach (array("hmac/verify, wrong MAC" => array("/api/crypto/hmac/verify", arra
   $ret_stat = http_transaction("https", "POST", $cfg_domain, $v[0], $ret_val, $post_data, $v[2]);
   if ( ($ret_stat != 200) || (@$ret_val['verified'] !== false) ) { echo "    $name: HTTP $ret_stat " . json_encode($ret_val) . ", expected 200 {\"verified\":false}\n"; goto print_and_exit; }
 }
-// b) error codes by the HEM API docs: 400 input, 403 scope, 404 not found, 409 state (DEV-438 phase 3: mostly 406)
+// b) error codes by the HEM API docs: 400 input, 403 scope, 404 not found, 409 state (DEV-438 phase 3: mostly 406); $peer is the
+//    X25519 peer key of subtest 10
 $token_d0 = helper_authorize($cfg_domain, $cfg_passpharse, "storage:disk0");
 $token_ecdh = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid_ecdh");
 $token_keylist = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");
@@ -490,6 +491,12 @@ if (($token_d0 == false) || ($token_ecdh == false) || ($token_keylist == false))
 $cases = array();
 foreach (array("hmac/verify, unknown kid" => array("https", "POST", "/api/crypto/hmac/verify", array('kid' => $kid_none, 'msg' => $msg, 'mac' => base64_encode($mac)), $keys['none'][1], 404),
                "exdsa/verify, unknown kid" => array("https", "POST", "/api/crypto/exdsa/verify", array('kid' => $kid_none, 'msg' => $msg, 'alg' => "Ed25519", 'sign' => base64_encode($sig)), $keys['none'][1], 404),
+               "cipher/encrypt, unknown kid" => array("https", "POST", "/api/crypto/cipher/encrypt", array('kid' => $kid_none, 'msg' => $msg, 'alg' => "AES256-ECB"), $keys['none'][1], 404),
+               "cipher/wrap, unknown kid" => array("https", "POST", "/api/crypto/cipher/wrap", array('kid' => $kid_none, 'msg' => base64_encode(random_bytes(32)), 'alg' => "AES256"), $keys['none'][1], 404),
+               "ecdh, unknown kid" => array("https", "POST", "/api/crypto/ecdh", array('kid' => $kid_none, 'pubkey' => $peer), $keys['none'][1], 404),
+               "pqc/mlkem/encaps, unknown kid" => array("https", "POST", "/api/crypto/pqc/mlkem/encaps", array('kid' => $kid_none), $keys['none'][1], 404),
+               "cipher/encrypt, ED25519 key" => array("https", "POST", "/api/crypto/cipher/encrypt", array('kid' => $keys['ed'][0], 'msg' => $msg, 'alg' => "AES256-ECB"), $keys['ed'][1], 400),
+               "ecdh, ExDSA-only key" => array("https", "POST", "/api/crypto/ecdh", array('kid' => $keys['ed'][0], 'pubkey' => $peer), $keys['ed'][1], 400),
                "hmac/hash, alg too long" => array("https", "POST", "/api/crypto/hmac/hash", array('kid' => $keys['hm'][0], 'msg' => $msg, 'alg' => "SHA2-256-X"), $keys['hm'][1], 400),
                "ecdh, no pubkey / ext_kid" => array("https", "POST", "/api/crypto/ecdh", array('kid' => $kid_ecdh), $token_ecdh, 400),
                "cipher/decrypt CBC, 20 B" => array("https", "POST", "/api/crypto/cipher/decrypt", array('kid' => $kid_aes, 'msg' => base64_encode(random_bytes(20)), 'alg' => "AES256-CBC", 'iv' => base64_encode(random_bytes(16))), $token_aes, 400),
