@@ -27,7 +27,8 @@ if ( !isset($ret_val['inited']) ) {
   if ($ret == false) goto print_and_exit;
   $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
   if ($token == false) goto print_and_exit;
-  $post_data = json_encode( array( 'wipeout' => true ) );
+  // "php wipeout.php factory": service wipe to the factory default - the internal disk (UI, TLS files, logs) is formatted too
+  $post_data = json_encode( array( 'wipeout' => in_array("factory", $argv) ? "factory" : true ) );
   $ret_val = false;
   $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );

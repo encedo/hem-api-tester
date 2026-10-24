@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 9;
+$test_subtest_cnt = 10;
 
 
 // initialize the execution env
@@ -359,6 +359,41 @@ if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // d) set result
 $test_cfg['subtests'][9] = 'OK';                              // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 10       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST10:
+echo "  subtest-10\n";
+$test_cfg['subtests'][10] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) service wipe to the factory default (DEV-438): an unknown wipeout value is refused; "factory" wipes the TOE and formats
+//    the internal disk - the TOE comes back not initialised and without the TLS files of the previous owner, so HTTPS does
+//    not start (after a classic wipe it starts with /tmp/tls.json). Runs last - the TOE has to be initialised again (T-2).
+$ret_val = false;
+$post_data = json_encode( array('wipeout' => "nonsense") );
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token_cfg);
+if ( $ret_stat != 406 ) { echo "    wipeout \"nonsense\": HTTP $ret_stat, expected 406\n"; goto print_and_exit; }
+$ret_val = false;
+$post_data = json_encode( array('wipeout' => "factory") );
+$ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token_cfg);   // over http - also for a TOE with a broken TLS
+if ( $ret_stat != 200 ) { echo "    wipeout \"factory\": HTTP $ret_stat\n"; goto print_and_exit; }
+$back = false;
+for ($i = 0; $i < 60; $i++) {                                // the TOE reboots
+  sleep(2);
+  $ret_val = false;
+  if ( (http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val) == 200) && isset($ret_val['inited']) ) { $back = true; break; }
+}
+if ( !$back ) { echo "    TOE not back as not initialised\n"; goto print_and_exit; }
+sleep(20);                                                   // HTTPS would be up by now after a classic wipe
+$ret_val = false;
+$ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);
+if ( ($ret_stat != 200) || !isset($ret_val['inited']) || ($ret_val['https'] != false) ) { echo "    after the factory wipe: " . json_encode($ret_val) . "\n"; goto print_and_exit; }
+// b) set result
+$test_cfg['subtests'][10] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
