@@ -80,6 +80,48 @@ $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config", 
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200
 if ($last_update_ts >= $ret_val['uts']) goto print_and_exit;  //'uts' update as changes applied correctly
+// e) CORS origin change (DEV-426, DEV-438 N8): a list of allowed origins - each entry compared as a whole and case-insensitively,
+//    "*.domain" = one label more; a request from an origin not on the list gets 412, a request without Origin (this tester)
+//    is not affected; the previous value is restored even if a check fails
+$cors_old = $ret_val['origin'];                             // from the re-read config above
+$cors_list = "Cors-X.Hem-Api-Tester.Encedo.com other.example.com *.wild.example.com";
+$cors_cases = array(
+  array("https://cors-x.hem-api-tester.encedo.com", 204),   // on the list (the list entry has capitals)
+  array("https://cors-y.hem-api-tester.encedo.com", 412),   // not on the list
+  array("https://other.example.co", 412),                   // only the beginning of an entry
+  array("https://a.wild.example.com", 204),                 // *.wild.example.com
+  array("https://a.b.wild.example.com", 412),               // two labels more than *.wild.example.com
+);
+$cors_ok = false;
+$ret_val = false;
+$post_data = json_encode( array( 'origin' => $cors_list) );
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token);
+if ( ($ret_stat == 200) && ($ret_val['updated'] == true) ) {
+  $cors_ok = true;
+  foreach ($cors_cases as $c) {
+    $hdrs = false;
+    $stat = raw_https_request($cfg_domain, "OPTIONS /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nOrigin: " . $c[0] . "\r\nAccess-Control-Request-Method: GET\r\nConnection: close\r\n\r\n", $hdrs);
+    if ( $cfg_debug ) var_dump( $c[0], $stat, $hdrs );
+    if ( ($stat != $c[1]) || (($c[1] == 204) && (@$hdrs['access-control-allow-origin'] !== $c[0])) ) {
+      echo "    CORS preflight from " . $c[0] . ": HTTP $stat, expected " . $c[1] . "\n";
+      $cors_ok = false;
+    }
+  }
+  $stat = raw_https_request($cfg_domain, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nOrigin: https://cors-y.hem-api-tester.encedo.com\r\nConnection: close\r\n\r\n");
+  if ( $stat != 412 ) { echo "    GET from an origin not on the list: HTTP $stat, expected 412\n"; $cors_ok = false; }
+  $ret_val = false;
+  $stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val);     // no Origin header
+  if ( $stat != 200 ) { echo "    GET without Origin: HTTP $stat, expected 200\n"; $cors_ok = false; }
+}
+// restore the previous origin (also after a failed check)
+$ret_val = false;
+$post_data = json_encode( array( 'origin' => $cors_old) );
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token);
+if ( $ret_stat != 200 ) goto print_and_exit;
+$ret_val = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config", $ret_val, $not_used, $token);
+if ( ($ret_stat != 200) || ($ret_val['origin'] !== $cors_old) ) goto print_and_exit;
+if ( !$cors_ok ) goto print_and_exit;
 // f) set result
 $test_cfg['subtests'][1] = 'OK';                            // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////

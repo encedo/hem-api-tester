@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 7;
+$test_subtest_cnt = 8;
 
 
 // initialize the execution env
@@ -286,6 +286,32 @@ if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // b) set result
 $test_cfg['subtests'][7] = 'OK';                              // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 8        ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST8:
+echo "  subtest-8\n";
+$test_cfg['subtests'][8] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) HTTP header names and the values with a defined case rule are case-insensitive (DEV-438 N8, RFC 9110)
+$cases = array();
+// media type in capitals: still a JSON request (not an upload), so the empty JSON body is a validation error
+$cases[] = array("content-type: Application/JSON, CONTENT-LENGTH", raw_https_request($cfg_domain, "POST /api/auth/token HTTP/1.1\r\nhost: $cfg_domain\r\ncontent-type: Application/JSON\r\nCONTENT-LENGTH: 2\r\nConnection: close\r\n\r\n{}"), 400);
+// header name and auth scheme in lower case
+$cases[] = array("authorization: bearer <token>", raw_https_request($cfg_domain, "GET /api/system/config HTTP/1.1\r\nHost: $cfg_domain\r\nauthorization: bearer $token_cfg\r\nConnection: close\r\n\r\n"), 200);
+// Connection is a token list in any case: the connection stays open for a second request
+$sock = raw_https_connect($cfg_domain);
+$cases[] = array("Connection: Keep-Alive, TE - request 1", raw_https_transaction($sock, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nConnection: Keep-Alive, TE\r\n\r\n"), 200);
+$cases[] = array("Connection: Keep-Alive, TE - request 2 on the same connection", raw_https_transaction($sock, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nConnection: close\r\n\r\n"), 200);
+if ($sock) fclose($sock);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// b) set result
+$test_cfg['subtests'][8] = 'OK';                              // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////

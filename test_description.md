@@ -95,12 +95,12 @@ The test checks reading and changing the TOE config with a system:config USER to
 
 | # | Subtest | What is checked (options / cases) | Expected result |
 |---|---|---|---|
-| 4.1 | Config change | Status/version; `helper_checkin`; `helper_authorize` (system:config); GET config, POST `{user:"Nickname-<time>"}`, GET config again | 200 on all; `updated` true; new `uts` > old `uts` |
+| 4.1 | Config change | Status/version; `helper_checkin`; `helper_authorize` (system:config); GET config, POST `{user:"Nickname-<time>"}`, GET config again; CORS (e): origin list `Cors-X.Hem-Api-Tester.Encedo.com other.example.com *.wild.example.com`, OPTIONS preflight from cors-x (lower case), cors-y, other.example.co, a.wild.example.com, a.b.wild.example.com, GET with Origin cors-y, GET without Origin; previous origin restored | 200 on all; `updated` true; new `uts` > old `uts`; CORS: 204 with the origin echoed for cors-x and a.wild, 412 for the others, 200 without Origin, origin restored |
 | 4.2 | Config validator | POST `user` longer than the 64-character limit; POST unknown key `useR`; GET config again | 400; 200 with `updated` false; `uts` unchanged |
 | 4.3 | Scope check | Tokens with scope system:config and system:reboot used on GET config; PPA only: `GET /api/system/config/attestation` with both tokens, `POST /api/system/config/provisioning` (dummy crt/genuine) | config: 200 / 403; attestation: 200 for both; provisioning 403 (already provisioned) |
 | 4.4 | Failure state (DIAG-only) | New token; GET config; `GET /api/diag/break_temp` (no token); wait 3 s; PPA only: GET attestation; `GET /api/system/reboot`. Without DIAG: 'SKIPPED (no DIAG)', counts as passed | 200; 200 (FLS.1 triggered); attestation 409; reboot 200 |
 
-**Endpoints:** `GET /api/system/status` (http), `GET /api/system/version` (https), `GET /api/system/checkin` + `POST /api/system/checkin` (http, via helper_checkin), `GET`+`POST /api/auth/token` (http, via helper_authorize), `GET /api/system/config` (https), `POST /api/system/config` (https), `GET /api/system/config/attestation` (https, PPA), `POST /api/system/config/provisioning` (https, PPA), `GET /api/diag/break_temp` (https, DIAG), `GET /api/system/reboot` (https); external `POST https://api.encedo.com/checkin` (via helper_checkin)
+**Endpoints:** `GET /api/system/status` (http), `GET /api/system/version` (https), `GET /api/system/checkin` + `POST /api/system/checkin` (http, via helper_checkin), `GET`+`POST /api/auth/token` (http, via helper_authorize), `GET /api/system/config` (https), `POST /api/system/config` (https), `OPTIONS /api/system/status` + `GET /api/system/status` with Origin (raw https, 4.1 CORS), `GET /api/system/config/attestation` (https, PPA), `POST /api/system/config/provisioning` (https, PPA), `GET /api/diag/break_temp` (https, DIAG), `GET /api/system/reboot` (https); external `POST https://api.encedo.com/checkin` (via helper_checkin)
 
 ## T-5 — External authenticator registration functionality
 
@@ -256,7 +256,7 @@ Checks that `/api/keymgmt/derive` can be reproduced off the device. Z = ECDH(loc
 
 ## T-15 — Input validation and robustness
 
-**File:** `test_15.php` · **Subtests:** 7 · **Preconditions:** device initialised, FW with the DEV-438 fixes, internet access to api.encedo.com (checkin), TLS 1.3 to the device with a trusted certificate (raw requests)
+**File:** `test_15.php` · **Subtests:** 8 · **Preconditions:** device initialised, FW with the DEV-438 fixes, internet access to api.encedo.com (checkin), TLS 1.3 to the device with a trusted certificate (raw requests)
 
 Sends malformed input (DEV-438) and checks that each case gets the expected error code. After every subtest it checks that the device still answers and did not restart: `uptime` in `/api/system/status` must not go down (`check_alive`). It covers HTTP body framing, KID format, base64 padding, auth JWT claims, AES-CBC around the block size, an undecryptable TLS key in the config, and malformed ExtAuth sealed scopes and pid lengths.
 
@@ -269,6 +269,7 @@ Sends malformed input (DEV-438) and checks that each case gets the expected erro
 | 15.5 | AES-CBC block sizes | New AES256 key; AES256-CBC encrypt + decrypt of 1, 15, 16, 17, 31, 32 B | 200 on both calls and the plaintext matches for every length; alive |
 | 15.6 | Bad TLS key in config | `system:config` token; `POST /api/system/config` with `tls` = random emp (91 B) + random key string (113 chars) | 200 without `reboot_required`; alive after 2 s |
 | 15.7 | ExtAuth sealed scope / pid | Direct pairing (ext/init + validate, code verified), ext/request for system:config, unseal. ext/token cases: valid; 16 B single block without MAC; not whole blocks; padding byte 0; wrong MAC; pid = 16 B prefix of the paired pid. ext/validate with a 16 B pid | 200, 406 ×5; validate 400; alive |
+| 15.8 | HTTP header case | `content-type: Application/JSON` + `CONTENT-LENGTH` on POST /api/auth/token with `{}`; `authorization: bearer <token>` on GET /api/system/config; `Connection: Keep-Alive, TE` then a second request on the same TLS connection | 400 (JSON, not an upload); 200; both 200; device alive |
 
 **Endpoints:** `GET /api/system/status` (http), `GET /api/system/version` (https), `GET /api/system/checkin` (http), `POST https://api.encedo.com/checkin`, `POST /api/system/checkin` (http), `GET /api/auth/token` + `POST /api/auth/token` (http, helper_authorize and auth_with_claims), `POST /api/auth/token` (raw https), `POST /api/keymgmt/update`, `POST /api/crypto/hmac/hash`, `POST /api/keymgmt/import`, `POST /api/keymgmt/create`, `POST /api/crypto/cipher/encrypt`, `POST /api/crypto/cipher/decrypt`, `POST /api/system/config`, `POST /api/auth/ext/init`, `POST /api/auth/ext/validate`, `POST /api/auth/ext/request`, `POST /api/auth/ext/token` (all https unless stated otherwise)
 
