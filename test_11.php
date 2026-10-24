@@ -864,7 +864,7 @@ $ret_val = false;
 $post_data = json_encode( $oper_arg );
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/hash", $ret_val, $post_data, $token_a);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat == 200 ) goto print_and_exit;        // expected is 409 - FLS.1 involved
+if ( $ret_stat != 409 ) goto print_and_exit;        // expected is 409 - FLS.1 involved
 // h) reboot to clear simulated failer state
 $ret_val = false;
 $dummy_val = false;

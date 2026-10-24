@@ -373,7 +373,7 @@ sleep(30);
 //only for PPA
 if (strcmp($test_cfg['conf'], "ENCEDO PPA") == 0) {
   $ret_val = false;
-  $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/config/attestation  ", $ret_val);
+  $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/config/attestation", $ret_val);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;
   $new_prefix = 'my';
@@ -388,7 +388,6 @@ if (strcmp($test_cfg['conf'], "ENCEDO PPA") == 0) {
   //echo "update config\n";
   $ret_val = false;
   $post_data = json_encode( array('tls' => $cert_data) );
-  $token = $init_result['token'];
   $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;               // exit on API call FAIL

@@ -399,16 +399,16 @@ TEST5:
 echo "  subtest-5\n";
 $test_cfg['subtests'][5] = 'ERROR';                       // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) performe correct user authentication
-$token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config", 120);
+$token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config", 30);   // short-lived token - the subtest waits until it expires
 if ($token == false) goto print_and_exit;
 // b) check token by using it
 $ret_val = false;
 $dummy_post_data = '{"epk":"SfxY+3RupkwK82cpOO+30VHyPMm0LAlYT+WeNtpIx2A="}';    // just a placeholder,
-$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $dummy_post_data, $user_auth_token);
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $dummy_post_data, $token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;               // expected 200 if allowed
 // c) wait until teh token expire
-$token_parts = explode(".", $user_auth_token);
+$token_parts = explode(".", $token);
 $token_details = json_decode(base64_decode($token_parts[1]), true);
 //var_dump($token_details);
 //echo "Local time: " . date("H:i:s") . "\n";
@@ -421,7 +421,7 @@ sleep($slp + 3);
 // d) check token by using it - should fail
 $ret_val = false;
 $dummy_post_data = '{"epk":"SfxY+3RupkwK82cpOO+30VHyPMm0LAlYT+WeNtpIx2A="}';    // just a placeholder,
-$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $dummy_post_data, $user_auth_token);
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $dummy_post_data, $token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 401 ) goto print_and_exit;               // expected 401 as token expired
 // e) set result

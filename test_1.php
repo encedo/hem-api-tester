@@ -197,7 +197,7 @@ if ( $ret_stat != 400 ) goto print_and_exit;               // expected 400 - "Ba
 // e) Content-Length that is not a number (DEV-430)
 $ret_stat = raw_https_request($cfg_domain, "POST /api/system/checkin HTTP/1.1\r\nHost: $cfg_domain\r\nContent-Type: application/json\r\nContent-Length: " . strlen($post_data) . "abc\r\nConnection: close\r\n\r\n" . $post_data);
 if ( $ret_stat != 400 ) goto print_and_exit;               // expected 400 - "Bad Request"
-// f) CORS preflight with Private Network Access request (DEV-426); TOE config 'origin' is "*" after T-2
+// f) CORS preflight with Private Network Access request (DEV-426); TOE config 'origin' is "*" (default, also after T-2)
 $origin = "https://hem-api-tester.encedo.com";
 $hdrs = false;
 $ret_stat = raw_https_request($cfg_domain, "OPTIONS /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nOrigin: $origin\r\nAccess-Control-Request-Method: POST\r\nAccess-Control-Request-Headers: content-type,authorization\r\nAccess-Control-Request-Private-Network: true\r\nConnection: close\r\n\r\n", $hdrs);

@@ -146,7 +146,7 @@ if ($token_correct == false) goto print_and_exit;                    // exit on 
 //echo "    scope=" . $token_details['scope'] ." role=" . $token_details['sub'] . " expire=" . $token_details['exp'] . "\n";
 //token with invalid scope
 $token_wrong = helper_authorize($cfg_domain, $cfg_passpharse, "system:reboot");
-if ($token_correct == false) goto print_and_exit;                    // exit on error
+if ($token_wrong == false) goto print_and_exit;                    // exit on error
 //echo "  USER token: $token_wrong\n";
 //$token_parts = explode(".", $token_wrong);
 //$token_details = json_decode(base64_decode($token_parts[1]), true);

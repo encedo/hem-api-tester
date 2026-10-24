@@ -149,9 +149,23 @@ $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
 if ( isset($ret_val['inited']) ) goto print_and_exit;      // exit as well if prereq not fulfill - dev not inited!
+if ( intval($ret_val['fls_state']) !== 0) {
+  echo "ERROR: fls_state !=0, is " . $ret_val['fls_state'] . "\r\n";
+  goto print_and_exit;     // exit as well if prereq not fulfill
+}
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
   $cfg_domain = $ret_val['hostname'];
 }
+// detect, get version details etc
+$ret_val = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/version", $ret_val);
+if ( $cfg_debug ) var_dump( $ret_val );
+if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
+$test_cfg['hwv'] = $ret_val['hwv'];                         //   or follow on with processing
+$test_cfg['blv'] = @$ret_val['blv'];
+$test_cfg['fwv'] = $ret_val['fwv'];
+$test_cfg['conf'] = "ENCEDO PPA";
+if ( strstr($ret_val['hwv'], "EPA") ) $test_cfg['conf'] = "ENCEDO EPA";
 $ret = helper_checkin($cfg_domain);
 if ($ret == false) goto print_and_exit;                     // exit on error
 // b) device attestation (no key): token of any scope, JWT checks, no key and pop block
