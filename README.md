@@ -63,3 +63,11 @@ Other modes (without api.encedo.com, against the HEM only; the HEM must be initi
 
    `php ExtAuth_Simulator.php neg`      as `direct`, plus malformed sealed scopes on `/api/auth/ext/token` (each must give 406 and the HEM must keep working)
 
+The protocol functions are in `libs/extauth.php`; test_15 uses them too.
+
+
+Input validation test (T-15)
+============================
+
+`php test_15.php` sends malformed input (body longer than Content-Length, KIDs of a wrong length, misplaced base64 padding, auth JWTs with missing or shortened claims, short AES-CBC messages, a TLS key that cannot be decrypted, malformed ExtAuth replies) and checks the error code from the API docs (400/401/406/411) and that the device is still running without a restart after every subtest. It needs an initialised device (run test_2 first), no DIAG endpoints and no user interaction.
+
