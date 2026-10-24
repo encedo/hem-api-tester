@@ -2,7 +2,7 @@
 
 What every test checks, its subtests, the options and cases tried and the HEM endpoints it calls. Generated from the test code; keep it in sync when a test changes.
 
-**Typical order:** `wipeout.php` (back to the uninitialised state), T-2 (initialisation), T-1, then T-3 ... T-15. T-1 needs TLS: a wipe (classic or factory default, T-15.13 / `wipeout.php factory`) leaves no TLS of the previous owner (the wipe empties /tmp, /x509 and /app of the internal disk), so run T-2 first. T-11 needs the keys created by T-10. T-5 and T-6 need the Encedo authenticator app or `ExtAuth_Simulator.php` (see README). T-7 and T-8 are interactive. Subtests that use `/api/diag/...` need a DIAG build; on a build without DIAG they are reported as `SKIPPED (no DIAG)` and count as passed.
+**Typical order:** `wipeout.php` (back to the uninitialised state), T-2 (initialisation), T-1, then T-3 ... T-15. T-1 needs TLS: a wipe (classic or factory default, T-15.14 / `wipeout.php factory`) leaves no TLS of the previous owner (the wipe empties /tmp, /x509 and /app of the internal disk), so run T-2 first. T-11 needs the keys created by T-10. T-5 and T-6 need the Encedo authenticator app or `ExtAuth_Simulator.php` (see README). T-7 and T-8 are interactive. Subtests that use `/api/diag/...` need a DIAG build; on a build without DIAG they are reported as `SKIPPED (no DIAG)` and count as passed.
 
 **Status codes:** as in the HEM API docs (general information, response codes): 400 input validation, 401 token, 403 access scope, 404 path, 406 operation failed, 409 internal state, 411/413 protocol, 418 TLS required.
 
@@ -25,7 +25,7 @@ What every test checks, its subtests, the options and cases tried and the HEM en
 | [T-12](#t-12--embedded-storage-management) | Embedded storage management | `test_12.php` | 2 |
 | [T-13](#t-13--attestation-post-apisystemconfigattestation-jwt-key-block-proof-of-possession) | Attestation (POST /api/system/config/attestation): JWT, key block, proof of possession | `test_13.php` | 5 |
 | [T-14](#t-14--key-derivation-interoperability-local-reproduction-of-apikeymgmtderive) | Key derivation interoperability (local reproduction of /api/keymgmt/derive) | `test_14.php` | 3 |
-| [T-15](#t-15--input-validation-and-robustness) | Input validation and robustness | `test_15.php` | 13 |
+| [T-15](#t-15--input-validation-and-robustness) | Input validation and robustness | `test_15.php` | 14 |
 
 ## T-0 — Performance tests
 
@@ -274,7 +274,8 @@ Sends malformed input (DEV-438) and checks that each case gets the expected erro
 | 15.10 | Derive input decoding (DEV-438 phase 2 group 2) | POST /api/keymgmt/derive with a valid request, a descr of 5 characters and a pubkey of 43 characters (pass the character check, do not decode) | 200; 400; 400 (was 406) |
 | 15.11 | Decrypt IV/tag, remote auth delay (DEV-438 phase 2 group 3) | AES256-CBC decrypt without iv, AES256-GCM decrypt without tag; 5 POST /api/auth/ext/token with an invalid authreply, timed | 400, 400 (CBC used a zero IV before); 401 each, first >= 500 ms, 5th >= 1500 ms; 16 s pause for the counter |
 | 15.12 | Verify result, status codes (DEV-438 phase 3) | New ED25519 and SHA2-256 keys; hmac/verify with a wrong MAC, exdsa/verify with a wrong signature; verify, cipher/encrypt, cipher/wrap, ecdh, mlkem/encaps with an unknown kid; cipher/encrypt and ecdh with the ExDSA-only ED25519 key; hmac/hash with alg `SHA2-256-X`; ecdh without pubkey/ext_kid; AES256-CBC decrypt of 20 B; keymgmt/search with mode 5; GET keymgmt/list/abc; storage/unlock/rw with a `storage:disk0` token; storage/unlock/xx; GET auth/init | 200 `{"verified":false}` ×2; 404 ×6; 400 ×7; 403; 404; 409; alive |
-| 15.13 | Factory default (service wipe) | POST config `{"wipeout":"nonsense"}`; `{"wipeout":"factory"}` over http; wait for the reboot | 400; 200; TOE back not initialised and HTTPS not started (internal disk formatted - no /tmp/tls.json). **Runs last: the TOE has to be initialised again with T-2 (T-1 needs TLS)** |
+| 15.13 | Max message, numbers, upload_ui name, request framing (DEV-438 C) | AES256-CBC encrypt + decrypt and AES256 wrap + unwrap of 2048 B; GET keymgmt/list/ and keymgmt/list/99999999999; keymgmt/search with offset -1 and limit "x"; GET logger/zzzzzzzz; upload_ui with filename x.tar; raw TLS keymgmt/search without a token: reference, Content-Length repeated with another value, Content-Length 0, Transfer-Encoding: chunked | 200 ×2 and the result equals the message; 400 ×5; 400; 200, 400, 400, 501; alive |
+| 15.14 | Factory default (service wipe) | POST config `{"wipeout":"nonsense"}`; `{"wipeout":"factory"}` over http; wait for the reboot | 400; 200; TOE back not initialised and HTTPS not started (internal disk formatted - no /tmp/tls.json). **Runs last: the TOE has to be initialised again with T-2 (T-1 needs TLS)** |
 
 **Endpoints:** `GET /api/system/status` (http), `GET /api/system/version` (https), `GET /api/system/checkin` (http), `POST https://api.encedo.com/checkin`, `POST /api/system/checkin` (http), `GET /api/auth/token` + `POST /api/auth/token` (http, helper_authorize and auth_with_claims), `POST /api/auth/token` (raw https), `POST /api/keymgmt/update`, `POST /api/crypto/hmac/hash`, `POST /api/keymgmt/import`, `POST /api/keymgmt/create`, `POST /api/crypto/cipher/encrypt`, `POST /api/crypto/cipher/decrypt`, `POST /api/system/config`, `POST /api/auth/ext/init`, `POST /api/auth/ext/validate`, `POST /api/auth/ext/request`, `POST /api/auth/ext/token` (all https unless stated otherwise)
 

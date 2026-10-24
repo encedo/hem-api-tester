@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 13;
+$test_subtest_cnt = 14;
 
 
 // initialize the execution env
@@ -524,6 +524,63 @@ $test_cfg['subtests'][12] = 'OK';                             // mark this subte
 TEST13:
 echo "  subtest-13\n";
 $test_cfg['subtests'][13] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) a message of the maximum length (2048 B) can be encrypted and decrypted, wrapped and unwrapped (DEV-438: the wrap
+//    of a max message (+8 B) was over the input limit of unwrap - 400)
+$cases = array();
+$msg = base64_encode(random_bytes(2048));
+foreach (array("cipher/encrypt + decrypt AES256-CBC" => array("/api/crypto/cipher/encrypt", "/api/crypto/cipher/decrypt", array('alg' => "AES256-CBC"), 'ciphertext', 'plaintext'),
+               "cipher/wrap + unwrap AES256" => array("/api/crypto/cipher/wrap", "/api/crypto/cipher/unwrap", array('alg' => "AES256"), 'wrapped', 'unwrapped')) as $name => $v) {
+  $ret_val = false;
+  $post_data = json_encode( array('kid' => $kid_aes, 'msg' => $msg) + $v[2] );
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, $v[0], $ret_val, $post_data, $token_aes);
+  if ( $ret_stat != 200 ) { echo "    $name: first call HTTP $ret_stat\n"; goto print_and_exit; }
+  $arg = array('kid' => $kid_aes, 'msg' => $ret_val[$v[3]]) + $v[2];
+  if ( isset($ret_val['iv']) ) $arg['iv'] = $ret_val['iv'];
+  $ret_val = false;
+  $post_data = json_encode($arg);
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, $v[1], $ret_val, $post_data, $token_aes);
+  $cases[] = array("$name, 2048 B", (($ret_stat == 200) && (@$ret_val[$v[4]] !== $msg)) ? -1 : $ret_stat, 200);   // -1: wrong result
+}
+// b) numbers in the path and in the search request: empty, overflowing, negative or not a number are refused (DEV-438: an
+//    empty number was 0, more than 9 digits overflowed, offset / limit were converted unchecked)
+$token_keylist = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");
+$token_log = helper_authorize($cfg_domain, $cfg_passpharse, "logger:get");
+if (($token_keylist == false) || ($token_log == false)) goto print_and_exit;
+foreach (array("keymgmt/list/ (empty offset)" => array("GET", "/api/keymgmt/list/", false, $token_keylist, 400),
+               "keymgmt/list/99999999999" => array("GET", "/api/keymgmt/list/99999999999", false, $token_keylist, 400),
+               "keymgmt/search, offset -1" => array("POST", "/api/keymgmt/search", array('descr' => "^" . base64_encode("CCTEST:"), 'offset' => -1), $token_keylist, 400),
+               "keymgmt/search, limit \"x\"" => array("POST", "/api/keymgmt/search", array('descr' => "^" . base64_encode("CCTEST:"), 'limit' => "x"), $token_keylist, 400),
+               "logger/zzzzzzzz (file id not hex)" => array("GET", "/api/logger/zzzzzzzz", false, $token_log, 400)) as $name => $v) {
+  $ret_val = false;
+  $post_data = ($v[2] === false) ? false : json_encode($v[2]);
+  $cases[] = array($name, http_transaction("https", $v[0], $cfg_domain, $v[1], $ret_val, $post_data, $v[3]), $v[4]);
+}
+// c) upload_ui accepts only webroot.tar - the name install_ui reads (DEV-438: any name was stored in /tmp)
+$cases[] = array("upload_ui, name x.tar", raw_https_request($cfg_domain, "POST /api/system/upgrade/upload_ui HTTP/1.1\r\nHost: $cfg_domain\r\nAuthorization: Bearer $token_upg\r\nContent-Disposition: attachment; filename=\"x.tar\"\r\nContent-Length: 10\r\nConnection: close\r\n\r\n0123456789"), 400);
+// d) request framing: Content-Length repeated with another value 400, Content-Length 0 400 (was 411), Transfer-Encoding 501
+//    (DEV-438: the last Content-Length was used, Transfer-Encoding was ignored - a chunked body would be read as the next request)
+$body = json_encode( array('descr' => "^" . base64_encode("CCTEST")) );   // search without a token - 200 when the request is taken
+$len = strlen($body);
+$req = "POST /api/keymgmt/search HTTP/1.1\r\nHost: $cfg_domain\r\nContent-Type: application/json\r\nConnection: close\r\n";
+$cases[] = array("search, reference", raw_https_request($cfg_domain, $req . "Content-Length: $len\r\n\r\n" . $body), 200);
+$cases[] = array("search, Content-Length " . ($len + 5) . " and $len", raw_https_request($cfg_domain, $req . "Content-Length: " . ($len + 5) . "\r\nContent-Length: $len\r\n\r\n" . $body), 400);
+$cases[] = array("search, Content-Length 0", raw_https_request($cfg_domain, $req . "Content-Length: 0\r\n\r\n"), 400);
+$cases[] = array("search, Transfer-Encoding: chunked", raw_https_request($cfg_domain, $req . "Content-Length: $len\r\nTransfer-Encoding: chunked\r\n\r\n" . $body), 501);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// e) set result
+$test_cfg['subtests'][13] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 14       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST14:
+echo "  subtest-14\n";
+$test_cfg['subtests'][14] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) service wipe to the factory default (DEV-438): an unknown wipeout value is refused; "factory" wipes the TOE and formats
 //    the internal disk - the TOE comes back not initialised and without the TLS files of the previous owner, so HTTPS does
 //    not start (a classic wipe empties /tmp as well, the UI stays). Runs last - the TOE has to be initialised again (T-2).
@@ -547,7 +604,7 @@ $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);
 if ( ($ret_stat != 200) || !isset($ret_val['inited']) || ($ret_val['https'] != false) ) { echo "    after the factory wipe: " . json_encode($ret_val) . "\n"; goto print_and_exit; }
 // b) set result
-$test_cfg['subtests'][13] = 'OK';                             // mark this subtest as OK
+$test_cfg['subtests'][14] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
