@@ -585,9 +585,35 @@ $cases[] = array("search, reference", raw_https_request($cfg_domain, $req . "Con
 $cases[] = array("search, Content-Length " . ($len + 5) . " and $len", raw_https_request($cfg_domain, $req . "Content-Length: " . ($len + 5) . "\r\nContent-Length: $len\r\n\r\n" . $body), 400);
 $cases[] = array("search, Content-Length 0", raw_https_request($cfg_domain, $req . "Content-Length: 0\r\n\r\n"), 400);
 $cases[] = array("search, Transfer-Encoding: chunked", raw_https_request($cfg_domain, $req . "Content-Length: $len\r\nTransfer-Encoding: chunked\r\n\r\n" . $body), 501);
+// e) keymgmt/get of the TLS private key gives its public key only, of the TLS certificate the DER - the pubkey must be the certificate key
+//    (DEV-472: the DER of the TLS private key was returned)
+$token_get = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:get");
+if ($token_get == false) goto print_and_exit;
+$ret_val = false;
+$not_used = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/list", $ret_val, $not_used, $token_keylist);
+if ( $ret_stat != 200 ) goto print_and_exit;
+$tls = array();
+foreach ($ret_val['list'] as $k) {
+  if ( in_array(@$k['label'], array("TLS PrivateKey", "TLS Certificate")) ) $tls[$k['label']] = $k['kid'];
+}
+if ( count($tls) != 2 ) { echo "    TLS key / certificate not listed\n"; goto print_and_exit; }
+$got = array();
+foreach (array("TLS PrivateKey" => false, "TLS Certificate" => true) as $label => $der) {
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/" . $tls[$label], $ret_val, $not_used, $token_get);
+  $cases[] = array("keymgmt/get $label, der " . ($der ? "returned" : "not returned"), (($ret_stat == 200) && (isset($ret_val['der']) !== $der)) ? -1 : $ret_stat, 200);   // -1: der returned / missing
+  $got[$label] = $ret_val;
+}
+$pub = false;   // the certificate public key as a compressed x963 point (the pubkey format of the ECC keys)
+if ( isset($got["TLS Certificate"]['der']) ) {
+  $ec = @openssl_pkey_get_details(openssl_pkey_get_public("-----BEGIN CERTIFICATE-----\n" . chunk_split($got["TLS Certificate"]['der'], 64, "\n") . "-----END CERTIFICATE-----\n"));
+  if ( isset($ec['ec']['x'], $ec['ec']['y']) ) $pub = base64_encode(((ord(substr($ec['ec']['y'], -1)) & 1) ? "\x03" : "\x02") . str_pad($ec['ec']['x'], 32, "\0", STR_PAD_LEFT));   // P-256 (the TLS key)
+}
+$cases[] = array("keymgmt/get TLS PrivateKey, pubkey = the certificate key", (($pub !== false) && (@$got["TLS PrivateKey"]['pubkey'] === $pub)) ? 200 : -1, 200);
 if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
-// e) set result
+// f) set result
 $test_cfg['subtests'][13] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
