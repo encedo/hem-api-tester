@@ -229,17 +229,21 @@ $test_cfg['subtests'][5] = 'OK';                              // mark this subte
 TEST6:
 echo "  subtest-6\n";
 $test_cfg['subtests'][6] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
-// a) TLS key in the config that cannot be decrypted (DEV-438 A7): not imported, no reboot requested, device keeps running
+// a) TLS bundles in the config that cannot be imported (DEV-438 A7): nothing is stored, the device keeps running
+//    (DEV-438: a failed import was a silent 200 without reboot_required - now 400)
 $token_cfg = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
 if ($token_cfg == false) goto print_and_exit;
-$tls = array('emp' => base64_encode(openssl_random_pseudo_bytes(91)),
-             'key' => base64_encode(openssl_random_pseudo_bytes(60)) . "." . substr(base64_encode(openssl_random_pseudo_bytes(60)), 0, 32));   // 80 + 1 + 32 = 113 characters, as a real key
-$ret_val = false;
-$post_data = json_encode( array('tls' => $tls) );
-$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token_cfg);
-if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 200 ) goto print_and_exit;
-if ( isset($ret_val['reboot_required']) ) { echo "    invalid TLS key accepted (reboot_required)\n"; goto print_and_exit; }
+$cases = array();
+foreach (array("tls: random emp + key" => array('emp' => base64_encode(openssl_random_pseudo_bytes(91)),
+                                                'key' => base64_encode(openssl_random_pseudo_bytes(60)) . "." . substr(base64_encode(openssl_random_pseudo_bytes(60)), 0, 32)),   // 80 + 1 + 32 = 113 characters, as a real key
+               "tls: emp not a key" => array('emp' => "AAAA", 'key' => "x", 'crt' => "AAAA"),
+               "tls: crt only, not base64" => array('crt' => "!!!"),
+               "tls: not an object" => "x") as $name => $tls) {
+  $ret_val = false;
+  $post_data = json_encode( array('tls' => $tls) );
+  $cases[] = array($name, http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token_cfg), 400);
+}
+if ( !check_cases($cases) ) goto print_and_exit;
 sleep(2);
 if ( !check_alive($uptime) ) goto print_and_exit;
 // b) set result
