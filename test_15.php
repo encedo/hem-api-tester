@@ -234,7 +234,22 @@ $test_cfg['subtests'][6] = 'ERROR';                           // mark this subte
 $token_cfg = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
 if ($token_cfg == false) goto print_and_exit;
 $cases = array();
-foreach (array("tls: random emp + key" => array('emp' => base64_encode(openssl_random_pseudo_bytes(91)),
+// self-signed certificates for the certificate only mode: of another domain; of the device domain with another key (not the TLS key)
+$t15_keyargs = array('private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => "prime256v1", 'digest_alg' => "sha256");
+$cnf = dirname(PHP_BINARY) . "/extras/ssl/openssl.cnf";
+if ( (getenv("OPENSSL_CONF") === false) && (PHP_OS_FAMILY == "Windows") && file_exists($cnf) ) {
+  $t15_keyargs['config'] = $cnf;
+}
+$crt = array();
+foreach (array("other.example.com", $cfg_domain) as $cn) {
+  $pkey = openssl_pkey_new($t15_keyargs);
+  $x509 = ($pkey === false) ? false : openssl_csr_sign(openssl_csr_new(array('commonName' => $cn), $pkey, $t15_keyargs), null, $pkey, 30, $t15_keyargs, random_int(1, 0x7fffffff));   // serial 0 is refused by wolfSSL (ASN_PARSE_E)
+  if ( ($x509 === false) || !openssl_x509_export($x509, $pem) ) { echo "ERROR: test certificate for $cn\n"; goto print_and_exit; }
+  $crt[] = preg_replace('/-----[A-Z ]+-----|\s/', '', $pem);   // the PEM body is the base64 of the DER
+}
+foreach (array("tls: crt of another domain" => array('crt' => $crt[0]),                     // DEV-470: the cert must be issued for the device domain
+               "tls: crt of the domain, another key" => array('crt' => $crt[1]),            // DEV-470: ... and match the TLS private key
+               "tls: random emp + key" => array('emp' => base64_encode(openssl_random_pseudo_bytes(91)),
                                                 'key' => base64_encode(openssl_random_pseudo_bytes(60)) . "." . substr(base64_encode(openssl_random_pseudo_bytes(60)), 0, 32)),   // 80 + 1 + 32 = 113 characters, as a real key
                "tls: emp not a key" => array('emp' => "AAAA", 'key' => "x", 'crt' => "AAAA"),
                "tls: crt only, not base64" => array('crt' => "!!!"),
