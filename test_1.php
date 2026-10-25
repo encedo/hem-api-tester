@@ -34,6 +34,10 @@ $test_cfg['blv'] = @$ret_val['blv'];
 $test_cfg['fwv'] = $ret_val['fwv'];
 $test_cfg['conf'] = "ENCEDO PPA";
 if ( strstr($ret_val['hwv'], "EPA") ) $test_cfg['conf'] = "ENCEDO EPA";
+// DEV-469: the release CID of the application / bootloader (released builds only) is a CIDv1 in base32
+foreach (array('fwc', 'blc') as $f) {
+  if ( isset($ret_val[$f]) && !preg_match('/^b[a-z2-7]{58}$/', $ret_val[$f]) ) { echo "ERROR: $f is not a CIDv1 base32: " . $ret_val[$f] . "\n"; goto print_and_exit; }
+}
 // c) check status - prereq: uninitialised TOE
 $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);

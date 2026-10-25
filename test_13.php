@@ -166,6 +166,7 @@ $test_cfg['blv'] = @$ret_val['blv'];
 $test_cfg['fwv'] = $ret_val['fwv'];
 $test_cfg['conf'] = "ENCEDO PPA";
 if ( strstr($ret_val['hwv'], "EPA") ) $test_cfg['conf'] = "ENCEDO EPA";
+$t13_version = $ret_val;                                    // DEV-469: fwc / blc compared with the attestation fw_cid / bl_cid
 $ret = helper_checkin($cfg_domain);
 if ($ret == false) goto print_and_exit;                     // exit on error
 // b) device attestation (no key): token of any scope, JWT checks, no key and pop block
@@ -178,6 +179,11 @@ if ( $ret_stat != 200 ) { echo "ERROR: device attestation: HTTP $ret_stat\n"; go
 $body = t13_check_jwt($jwt, $aud, $nonce);
 if ( !is_array($body) ) { echo "ERROR: device attestation: $body\n"; goto print_and_exit; }
 if ( isset($body['key']) || isset($body['pop']) ) { echo "ERROR: device attestation has a key/pop block\n"; goto print_and_exit; }
+// DEV-469: the release CIDs (released builds only) are CIDv1 base32, the same as fwc / blc in /api/system/version
+foreach (array('fw_cid' => 'fwc', 'bl_cid' => 'blc') as $f => $v) {
+  if ( @$body['device'][$f] !== @$t13_version[$v] ) { echo "ERROR: device attestation $f differs from version $v\n"; goto print_and_exit; }
+  if ( isset($body['device'][$f]) && !preg_match('/^b[a-z2-7]{58}$/', $body['device'][$f]) ) { echo "ERROR: $f is not a CIDv1 base32: " . $body['device'][$f] . "\n"; goto print_and_exit; }
+}
 $skid = sha1("\x04" . t13_b64url_dec(json_decode(t13_b64url_dec(explode('.', $jwt)[0]), true)['jwk']['x']) . t13_b64url_dec(json_decode(t13_b64url_dec(explode('.', $jwt)[0]), true)['jwk']['y']));
 // c) the attestation key is the same in the next token, jti differs
 $jti = $body['jti'];
