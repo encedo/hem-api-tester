@@ -7,7 +7,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-11";
 $test_descr = "Cryptography functionality";
-$test_subtest_cnt = 10;
+$test_subtest_cnt = 11;
 
 
 function t11_ossl($args) {                  // OpenSSL CLI (>= 3.5); returns true on exit code 0 - as t13_ossl (T-13)
@@ -16,6 +16,31 @@ function t11_ossl($args) {                  // OpenSSL CLI (>= 3.5); returns tru
   foreach ($args as $a) $cmd .= " " . escapeshellarg($a);
   exec($cmd . " 2>&1", $out, $rc);
   return ($rc == 0);
+}
+
+function t11_shake256_64($data) {           // DEV-481 (B3): SHAKE256 with 64 B output (OpenSSL CLI); false on error
+  $in = tempnam(sys_get_temp_dir(), "t11");
+  $out = tempnam(sys_get_temp_dir(), "t11");
+  file_put_contents($in, $data);
+  $ok = t11_ossl(array("dgst", "-shake256", "-xoflen", "64", "-binary", "-out", $out, $in));
+  $ret = $ok ? file_get_contents($out) : false;
+  @unlink($in);
+  @unlink($out);
+  return ($ret !== false) && (strlen($ret) == 64) ? $ret : false;
+}
+
+function t11_hotp($key, $counter, $digits = 6) {   // DEV-481 (B6): HOTP RFC 4226 (HMAC-SHA1, dynamic truncation)
+  $h = hash_hmac('sha1', pack('J', $counter), $key, true);
+  $o = ord($h[19]) & 0x0f;
+  $bin = ((ord($h[$o]) & 0x7f) << 24) | (ord($h[$o + 1]) << 16) | (ord($h[$o + 2]) << 8) | ord($h[$o + 3]);
+  return str_pad((string)($bin % (10 ** $digits)), $digits, "0", STR_PAD_LEFT);
+}
+
+function t11_p256_pem($point) {             // DEV-481 (B6): compressed P-256 point -> SubjectPublicKeyInfo PEM
+  $bit = "\x03" . chr(strlen($point) + 1) . "\x00" . $point;
+  $alg = "\x30\x13" . hex2bin("06072a8648ce3d0201") . hex2bin("06082a8648ce3d030107");
+  $der = "\x30" . chr(strlen($alg) + strlen($bit)) . $alg . $bit;
+  return "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode($der), 64, "\n") . "-----END PUBLIC KEY-----\n";
 }
 
 
@@ -320,6 +345,19 @@ foreach($keys_to_test as $item) {
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);
     if ( $ret_stat != 400 ) { echo "ERROR: det \"yes\": HTTP $ret_stat (400 expected)\n"; goto print_and_exit; }
+    // DEV-481 (B1): alg ECDSA - msg is a digest made here; the signature verifies as SHA256WithECDSA over the data; a 19 B digest -> 400
+    $post_data = json_encode( array('kid' => $kid, 'msg' => base64_encode(hash('sha256', base64_decode($msg_raw), true)), 'alg' => "ECDSA") );
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);
+    if ( $ret_stat != 200 ) goto print_and_exit;
+    $post_data = json_encode( array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "SHA256WithECDSA", 'sign' => $ret_val['sign']) );
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
+    if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) { echo "ERROR: ECDSA prehash signature does not verify as SHA256WithECDSA ($type)\n"; goto print_and_exit; }
+    $post_data = json_encode( array('kid' => $kid, 'msg' => base64_encode(openssl_random_pseudo_bytes(19)), 'alg' => "ECDSA") );
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);
+    if ( $ret_stat != 400 ) { echo "ERROR: ECDSA 19 B digest: HTTP $ret_stat (400 expected)\n"; goto print_and_exit; }
     $counter++;
   }
 }
@@ -371,27 +409,15 @@ foreach($keychain as $item) {
   // gen access token for that KID
   $token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid");   // more here https://docs.encedo.com/hem-api/reference/api-reference/cryptography-operations/encryption/encryption-decryption#required-access-scope
   if ($token == false) goto print_and_exit;                    // exit on error
-  //AES in ECB mode
-  //encrypt example message
-  $msg = base64_encode( openssl_random_pseudo_bytes( 64 ) );  //msg len HAVE TO be multiple of AES block size 16bytes
+  // DEV-481 (B7): AES-ECB is off in the build (CRYPTO_AES_ECB 0) - encrypt and decrypt "-ECB" -> 400
+  $msg = base64_encode( openssl_random_pseudo_bytes( 64 ) );
   $alg = "$type-ECB";
-  $post_array = array('kid' => $kid, 'msg' => $msg, 'alg' => $alg);
-  $post_data = json_encode( $post_array );
-  $ret_val = false;
-  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/encrypt", $ret_val, $post_data, $token);
-  if ( $cfg_debug ) var_dump( $ret_val );
-  if ( $ret_stat != 200 ) goto print_and_exit;    //expected is 200 on success
-  $ciphertext = $ret_val['ciphertext'];
-  //try to decrypt the message
-  $post_array['msg'] = $ciphertext;
-  $post_data = json_encode( $post_array );
-  $ret_val = false;
-  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/decrypt", $ret_val, $post_data, $token);
-  if ( $cfg_debug ) var_dump( $ret_val );
-  if ( $ret_stat != 200 ) goto print_and_exit;    //expected is 200 on success
-  $msg_test = $ret_val['plaintext'];
-  //compare
-  if ($msg != $msg_test) goto print_and_exit;    //expected is 200 on success
+  foreach (array("encrypt", "decrypt") as $op) {
+    $post_data = json_encode( array('kid' => $kid, 'msg' => $msg, 'alg' => $alg) );
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/$op", $ret_val, $post_data, $token);
+    if ( $ret_stat != 400 ) { echo "ERROR: $op $alg: HTTP $ret_stat (400 expected)\n"; goto print_and_exit; }
+  }
   //AES in CBC mode
   //encrypt example message
   $msg = base64_encode( openssl_random_pseudo_bytes( 100 ) ); //CBC can handle any message size - padding
@@ -450,6 +476,7 @@ foreach($keychain as $item) {
   if ( $ret_stat != 200 ) goto print_and_exit;    //expected is 200 on success
   $ciphertext = $ret_val['ciphertext'];
   $iv = $ret_val['iv'];
+  if (strlen(base64_decode($iv)) != 12) { echo "ERROR: GCM iv " . strlen(base64_decode($iv)) . " B (12 expected)\n"; goto print_and_exit; }   // DEV-481 (B2): 96-bit IV (SP 800-38D)
   $tag = $ret_val['tag'];
   //try to decrypt the message
   $post_array['msg'] = $ciphertext;
@@ -1075,6 +1102,8 @@ do {
 } while (true);
 // b) iterate over found keys to call ML-DSA Sign & Verification
 //var_dump($keychain);
+$token_keyget = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:get");   // DEV-481 (B3): public key for mu
+if ($token_keyget == false) goto print_and_exit;
 $counter = 0;
 foreach($keychain as $item) {
   $kid = $item['kid'];
@@ -1097,6 +1126,33 @@ foreach($keychain as $item) {
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mldsa/verify", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - HMAC verify success
+  // DEV-481 (B4): HashML-DSA-SHA512 - msg = SHA-512 of the data, with ctx; sign + verify
+  $ctx = base64_encode( openssl_random_pseudo_bytes( 16 ) );
+  $oper_arg = array('kid' => $kid, 'msg' => base64_encode(hash('sha512', base64_decode($msg_raw), true)), 'ctx' => $ctx, 'mode' => "HashML-DSA-SHA512");
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mldsa/sign", $ret_val, json_encode( $oper_arg ), $token);
+  if ( $ret_stat != 200 ) goto print_and_exit;
+  $oper_arg['sign'] = $ret_val['sign'];
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mldsa/verify", $ret_val, json_encode( $oper_arg ), $token);
+  if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) { echo "ERROR: HashML-DSA-SHA512 verify (" . $item['type'] . ")\n"; goto print_and_exit; }
+  // DEV-481 (B3): ML-DSA-mu - mu made here (FIPS 204: tr = SHAKE256(pk, 64), mu = SHAKE256(tr || 00 00 || M, 64)); the signature verifies as pure ML-DSA over M
+  $ret_val = false;
+  $dummy_val = false;
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/$kid", $ret_val, $dummy_val, $token_keyget);
+  if ( $ret_stat != 200 ) goto print_and_exit;
+  $mu = t11_shake256_64( t11_shake256_64(base64_decode($ret_val['pubkey'])) . "\x00\x00" . base64_decode($msg_raw) );
+  if ($mu === false) { echo "ERROR: openssl >= 3.5 needed (SHAKE256)\n"; goto print_and_exit; }
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mldsa/sign", $ret_val, json_encode( array('kid' => $kid, 'msg' => base64_encode($mu), 'mode' => "ML-DSA-mu") ), $token);
+  if ( $ret_stat != 200 ) goto print_and_exit;
+  $ret_val_sign = $ret_val['sign'];
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mldsa/verify", $ret_val, json_encode( array('kid' => $kid, 'msg' => $msg_raw, 'sign' => $ret_val_sign) ), $token);
+  if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) { echo "ERROR: ML-DSA-mu signature is not a pure ML-DSA signature (" . $item['type'] . ")\n"; goto print_and_exit; }
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mldsa/sign", $ret_val, json_encode( array('kid' => $kid, 'msg' => base64_encode(substr($mu, 1)), 'mode' => "ML-DSA-mu") ), $token);
+  if ( $ret_stat != 400 ) { echo "ERROR: ML-DSA-mu 63 B: HTTP $ret_stat (400 expected)\n"; goto print_and_exit; }
   $counter++;
 }
 // c) if above loop ends and no 'goto' calls, all ML-KEM tests passed!
@@ -1182,6 +1238,93 @@ foreach ($imported as $kid) {                                // the imported key
 }
 array_map('unlink', glob("$dir/*"));
 @rmdir($dir);
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 11       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST11:
+echo "  subtest-11\n";
+$test_cfg['subtests'][11] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// DEV-481 (B6): key type SHA1 and /api/crypto/hmac/otp. The seed is made as in an enrolment: derive over ECDH with type SHA1,
+// the same seed is computed here (nothing is exported); HOTP / TOTP compared with the local RFC 4226 / 6238 values
+$t11_created = array();
+$token_keygen = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:gen");
+if ($token_keygen == false) goto print_and_exit;
+$token_keydel = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:del");
+if ($token_keydel == false) goto print_and_exit;
+if ( (t11_hotp("12345678901234567890", 0) !== "755224") || (t11_hotp("12345678901234567890", intdiv(1111111109, 30), 8) !== "07081804") ) goto print_and_exit;   // the local reference (RFC vectors)
+$ret_val = false;
+$post_data = json_encode(array('label' => "T-11.11 ECDH", 'type' => "SECP256R1", 'mode' => "ECDH", 'descr' => base64_encode("CCTEST:T-11.11_ECDH"), 'return_pubkey' => true));
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_keygen);
+if ( $ret_stat != 200 ) goto t11_11_end;
+$t11_created[] = $ret_val['kid'];
+$keyargs = array('private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => "prime256v1");
+$cnf = dirname(PHP_BINARY) . "\\extras\\ssl\\openssl.cnf";       // Windows PHP builds do not find openssl.cnf on their own
+if ( (getenv("OPENSSL_CONF") === false) && (PHP_OS_FAMILY == "Windows") && file_exists($cnf) ) $keyargs['config'] = $cnf;
+$peer = openssl_pkey_new($keyargs);
+if ($peer === false) goto t11_11_end;
+$z = openssl_pkey_derive(t11_p256_pem(base64_decode($ret_val['pubkey'])), $peer);
+$ec = openssl_pkey_get_details($peer)['ec'];
+$peer_pub = ((ord(substr($ec['y'], -1)) & 1) ? "\x03" : "\x02") . str_pad($ec['x'], 32, "\0", STR_PAD_LEFT);
+$salt = openssl_random_pseudo_bytes(16);
+$post_data = json_encode(array('kid' => $t11_created[0], 'label' => "T-11.11 OTP", 'type' => "SHA1", 'pubkey' => base64_encode($peer_pub), 'hkdf_salt' => base64_encode($salt), 'descr' => base64_encode("CCTEST:T-11.11_OTP")));
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/derive", $ret_val, $post_data, $token_keygen);
+if ( ($ret_stat != 200) || (@$ret_val['type'] !== "SHA1") ) { echo "ERROR: derive SHA1: HTTP $ret_stat\n"; goto t11_11_end; }
+$kid = $ret_val['kid'];
+$t11_created[] = $kid;
+$seed = hash_hkdf('sha512', $z, 20, "encedo-derive:v1:sha1", $salt);
+$token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid");
+if ($token == false) goto t11_11_end;
+// a) HOTP compute, 6 and 8 digits
+foreach (array(0, 1, 9, 1000000) as $c) foreach (array(6, 8) as $d) {
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/otp", $ret_val, json_encode(array('kid' => $kid, 'mode' => "HOTP", 'counter' => $c, 'digits' => $d)), $token);
+  if ( ($ret_stat != 200) || (@$ret_val['code'] !== t11_hotp($seed, $c, $d)) ) { echo "ERROR: HOTP counter $c digits $d: HTTP $ret_stat\n"; goto t11_11_end; }
+}
+// b) TOTP compute with time (RFC 6238 times) and with the device RTC
+foreach (array(59, 1111111109, 2000000000) as $t) {
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/otp", $ret_val, json_encode(array('kid' => $kid, 'mode' => "TOTP", 'time' => $t, 'digits' => 8)), $token);
+  if ( ($ret_stat != 200) || (@$ret_val['code'] !== t11_hotp($seed, intdiv($t, 30), 8)) || (@$ret_val['step'] !== intdiv($t, 30)) ) { echo "ERROR: TOTP time $t: HTTP $ret_stat\n"; goto t11_11_end; }
+}
+$t0 = time();
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/otp", $ret_val, json_encode(array('kid' => $kid, 'mode' => "TOTP")), $token);
+if ( ($ret_stat != 200) || !in_array(@$ret_val['code'], array(t11_hotp($seed, intdiv($t0, 30) - 1), t11_hotp($seed, intdiv($t0, 30)), t11_hotp($seed, intdiv($t0, 30) + 1)), true) ) { echo "ERROR: TOTP device RTC: HTTP $ret_stat\n"; goto t11_11_end; }
+// c) verify: window +-1, step +2 outside, wrong code, HOTP look-ahead
+$st = intdiv(1234567890, 30);
+foreach (array(array(t11_hotp($seed, $st), true), array(t11_hotp($seed, $st - 1), true), array(t11_hotp($seed, $st + 1), true), array(t11_hotp($seed, $st + 2), false)) as $v) {
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/otp", $ret_val, json_encode(array('kid' => $kid, 'mode' => "TOTP", 'time' => 1234567890, 'code' => $v[0])), $token);
+  if ( ($ret_stat != 200) || (@$ret_val['verified'] !== $v[1]) ) { echo "ERROR: TOTP verify " . $v[0] . ": HTTP $ret_stat\n"; goto t11_11_end; }
+}
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/otp", $ret_val, json_encode(array('kid' => $kid, 'mode' => "HOTP", 'counter' => 5, 'code' => t11_hotp($seed, 7), 'window' => 2)), $token);
+if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) || (@$ret_val['step'] !== 7) ) { echo "ERROR: HOTP verify look-ahead: HTTP $ret_stat\n"; goto t11_11_end; }
+// d) bad input -> 400, SHA1 key in hmac/hash -> 406
+foreach (array(array('mode' => "TOTP", 'time' => 59, 'digits' => 7), array('mode' => "TOTP", 'time' => 59, 'period' => 10), array('mode' => "TOTP", 'time' => 59, 'code' => "12a456"),
+               array('mode' => "TOTP", 'time' => 59, 'code' => "123456", 'window' => 11), array('mode' => "HOTP"), array('mode' => "x")) as $bad) {
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/otp", $ret_val, json_encode(array_merge(array('kid' => $kid), $bad)), $token);
+  if ( $ret_stat != 400 ) { echo "ERROR: otp " . json_encode($bad) . ": HTTP $ret_stat (400 expected)\n"; goto t11_11_end; }
+}
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/hash", $ret_val, json_encode(array('kid' => $kid, 'msg' => base64_encode("x"))), $token);
+if ( $ret_stat != 406 ) { echo "ERROR: hmac/hash on a SHA1 key: HTTP $ret_stat (406 expected)\n"; goto t11_11_end; }
+// e) set result
+$test_cfg['subtests'][11] = 'OK';                             // mark this subtest as OK
+t11_11_end:
+foreach ($t11_created as $k) {                                // the keys of this subtest are removed
+  $ret_val = false;
+  $dummy_val = false;
+  $ret_stat = http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/$k", $ret_val, $dummy_val, $token_keydel);
+  if ( $ret_stat != 200 ) $test_cfg['subtests'][11] = 'ERROR';
+}
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////

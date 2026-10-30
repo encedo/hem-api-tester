@@ -7,7 +7,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-14";
 $test_descr = "Key derivation interoperability (local reproduction of /api/keymgmt/derive)";
-$test_subtest_cnt = 3;
+$test_subtest_cnt = 4;
 
 
 // initialize the execution env
@@ -221,10 +221,10 @@ $peer_pub = t14_compress(openssl_pkey_get_details($peer)['ec'], 32);
 $z = openssl_pkey_derive(t14_pem_pub("SECP256R1", $main_pub), $peer);
 if ($z === false) goto print_and_exit;
 $salt = openssl_random_pseudo_bytes(16);
-$sym_types = array(   // HEM type => key size, local check (HMAC hash name or AES ECB cipher)
+$sym_types = array(   // HEM type => key size, local check (HMAC hash name or AES CBC cipher; DEV-481 B7: was ECB, off in the build)
   "SHA2-256" => array(32, "sha256"),   "SHA2-384" => array(48, "sha384"),   "SHA2-512" => array(64, "sha512"),
   "SHA3-256" => array(32, "sha3-256"), "SHA3-384" => array(48, "sha3-384"), "SHA3-512" => array(64, "sha3-512"),
-  "AES128"   => array(16, "aes-128-ecb"), "AES192" => array(24, "aes-192-ecb"), "AES256" => array(32, "aes-256-ecb"),
+  "AES128"   => array(16, "aes-128-cbc"), "AES192" => array(24, "aes-192-cbc"), "AES256" => array(32, "aes-256-cbc"),
 );
 $msg = openssl_random_pseudo_bytes(64);                       // multiple of the AES block size
 foreach ($sym_types as $type => $sym) {
@@ -236,13 +236,13 @@ foreach ($sym_types as $type => $sym) {
   $token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid");
   if ($token == false) goto print_and_exit;                  // exit on error
   if (strpos($type, "AES") === 0) {
-    $post_data = json_encode(array('kid' => $kid, 'msg' => base64_encode($msg), 'alg' => "$type-ECB"));
+    $post_data = json_encode(array('kid' => $kid, 'msg' => base64_encode($msg), 'alg' => "$type-CBC"));   // DEV-481 (B7): CBC (was ECB)
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/encrypt", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( $ret_stat != 200 ) goto print_and_exit;              // expected is 200 on success
     $hem = $ret_val['ciphertext'];
-    $local = base64_encode(openssl_encrypt($msg, $sym[1], $key, OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING));
+    $local = base64_encode(openssl_encrypt($msg, $sym[1], $key, OPENSSL_RAW_DATA, base64_decode($ret_val['iv'])));   // the IV made by HEM, PKCS#7 on both sides
   } else {
     $post_data = json_encode(array('kid' => $kid, 'msg' => base64_encode($msg)));
     $ret_val = false;
@@ -259,6 +259,81 @@ foreach ($sym_types as $type => $sym) {
 }
 // b) set result
 $test_cfg['subtests'][3] = 'OK';                              // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 4        ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST4:
+echo "  subtest-4\n";
+$test_cfg['subtests'][4] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
+// DEV-481 (B5): HMAC SHA2 parents derived over ECDH from the 14.3 main key (known here), then
+// a) POST /api/crypto/kdf HKDF / SP800-108 recomputed locally, bad input -> 400
+// b) keymgmt/derive with the HMAC parent and no peer: child = HKDF-SHA512(parent, hkdf_salt, "encedo-derive:v1:<type>")
+foreach (array("SHA2-256" => array(32, "sha256"), "SHA2-512" => array(64, "sha512")) as $ptype => $p) {
+  $salt = openssl_random_pseudo_bytes(16);
+  $label = "T-14.4 $ptype<SECP256R1 $run";
+  $ret_val = t14_derive($cfg_domain, $token_keygen, $main_kid, $ptype, $peer_pub, $salt, $label);
+  if ( !is_array($ret_val) ) { echo "ERROR: derive $label: HTTP $ret_val\n"; goto print_and_exit; }
+  $parent_kid = $ret_val['kid'];
+  $parent = hash_hkdf('sha512', $z, $p[0], "encedo-derive:v1:" . strtolower($ptype), $salt);
+  $token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$parent_kid");
+  if ($token == false) goto print_and_exit;                  // exit on error
+  // a) crypto/kdf
+  foreach (array(16, 33, 128) as $len) {
+    $kdf_salt = openssl_random_pseudo_bytes(20);
+    $info = "tenant:$len:$run";
+    $post_data = json_encode(array('kid' => $parent_kid, 'alg' => "HKDF", 'salt' => base64_encode($kdf_salt), 'info' => base64_encode($info), 'len' => $len));
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/kdf", $ret_val, $post_data, $token);
+    if ( ($ret_stat != 200) || (base64_decode($ret_val['okm']) !== hash_hkdf($p[1], $parent, $len, $info, $kdf_salt)) ) { echo "ERROR: kdf HKDF $ptype len $len: HTTP $ret_stat\n"; goto print_and_exit; }
+    $local = '';                                              // SP 800-108 counter mode: K(i) = HMAC(key, [i]32 || info || [L]32), L in bits
+    for ($i = 1; strlen($local) < $len; $i++) $local .= hash_hmac($p[1], pack('N', $i) . "label\x00" . $info . pack('N', $len * 8), $parent, true);
+    $post_data = json_encode(array('kid' => $parent_kid, 'alg' => "SP800-108", 'info' => base64_encode("label\x00" . $info), 'len' => $len));
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/kdf", $ret_val, $post_data, $token);
+    if ( ($ret_stat != 200) || (base64_decode($ret_val['okm']) !== substr($local, 0, $len)) ) { echo "ERROR: kdf SP800-108 $ptype len $len: HTTP $ret_stat\n"; goto print_and_exit; }
+  }
+  foreach (array(array('alg' => "HKDF", 'len' => 15), array('alg' => "HKDF", 'len' => 129), array('alg' => "SP800-108", 'salt' => base64_encode("x"), 'len' => 32),
+                 array('alg' => "HKDF", 'info' => base64_encode("encedo-x"), 'len' => 32), array('alg' => "x", 'len' => 32)) as $bad) {
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/kdf", $ret_val, json_encode(array_merge(array('kid' => $parent_kid), $bad)), $token);
+    if ( $ret_stat != 400 ) { echo "ERROR: kdf " . json_encode($bad) . ": HTTP $ret_stat (400 expected)\n"; goto print_and_exit; }
+  }
+  // b) derive from the HMAC parent
+  $msg = openssl_random_pseudo_bytes(64);
+  foreach (array("AES256" => 32, "SHA2-512" => 64) as $type => $klen) {
+    $child_salt = openssl_random_pseudo_bytes(16);
+    $label = "T-14.4 $type<$ptype $run";
+    $post_data = json_encode(array('kid' => $parent_kid, 'label' => $label, 'type' => $type, 'hkdf_salt' => base64_encode($child_salt), 'descr' => base64_encode("CCTEST:$label")));
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/derive", $ret_val, $post_data, $token_keygen);
+    if ( $ret_stat != 200 ) { echo "ERROR: derive $label: HTTP $ret_stat\n"; goto print_and_exit; }
+    $child_kid = $ret_val['kid'];
+    $child = hash_hkdf('sha512', $parent, $klen, "encedo-derive:v1:" . strtolower($type), $child_salt);
+    $token_child = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$child_kid");
+    if ($token_child == false) goto print_and_exit;          // exit on error
+    $ret_val = false;
+    if ($type == "AES256") {
+      $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/encrypt", $ret_val, json_encode(array('kid' => $child_kid, 'msg' => base64_encode($msg), 'alg' => "AES256-CBC")), $token_child);
+      $ok = ($ret_stat == 200) && (base64_decode($ret_val['ciphertext']) === openssl_encrypt($msg, "aes-256-cbc", $child, OPENSSL_RAW_DATA, base64_decode($ret_val['iv'])));
+    } else {
+      $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/hmac/hash", $ret_val, json_encode(array('kid' => $child_kid, 'msg' => base64_encode($msg))), $token_child);
+      $ok = ($ret_stat == 200) && (base64_decode($ret_val['mac']) === hash_hmac('sha512', $msg, $child, true));
+    }
+    if (!$ok) { echo "ERROR: $label: HEM result differs from the local one (HTTP $ret_stat)\n"; goto print_and_exit; }
+  }
+}
+// c) derive without a peer from a key that is not HMAC SHA2 (the EC main key) -> 406
+$post_data = json_encode(array('kid' => $main_kid, 'label' => "T-14.4 AES256<SECP256R1 nopeer $run", 'type' => "AES256", 'descr' => base64_encode("CCTEST:T-14.4")));
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/derive", $ret_val, $post_data, $token_keygen);
+if ( $ret_stat != 406 ) { echo "ERROR: derive without a peer from an EC key: HTTP $ret_stat (406 expected)\n"; goto print_and_exit; }
+// d) set result
+$test_cfg['subtests'][4] = 'OK';                              // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
