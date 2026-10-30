@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 14;
+$test_subtest_cnt = 17;   // DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe)
 
 
 // initialize the execution env
@@ -344,16 +344,11 @@ $test_cfg['subtests'][8] = 'OK';                              // mark this subte
 TEST9:
 echo "  subtest-9\n";
 $test_cfg['subtests'][9] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
-// a) a token requested without a scope gets an empty scope and is refused by scoped endpoints (DEV-438: was a crash)
+// a) a token without a scope is not issued (DEV-436: auth/token answers 400; DEV-438: an empty scope was a crash)
 $cases = array();
 $token_noscope = helper_authorize($cfg_domain, $cfg_passpharse, "");
-if ($token_noscope == false) goto print_and_exit;
-$ret_val = false;
-$post_data = json_encode( array('epk' => base64_encode(sodium_crypto_scalarmult_base(random_bytes(32)))) );
-$cases[] = array("ext/init with a token without scope", http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $post_data, $token_noscope), 403);
-$ret_val = false;
+$cases[] = array("auth/token with an empty scope is refused", ($token_noscope === false) ? 400 : 200, 400);
 $not_used = false;
-$cases[] = array("GET config with a token without scope", http_transaction("https", "GET", $cfg_domain, "/api/system/config", $ret_val, $not_used, $token_noscope), 403);
 // b) firmware upload: a wrong extension and a file of 3 MiB or more are answered (DEV-438: was no response at all)
 $token_upg = helper_authorize($cfg_domain, $cfg_passpharse, "system:upgrade");
 if ($token_upg == false) goto print_and_exit;
@@ -615,6 +610,176 @@ if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // f) set result
 $test_cfg['subtests'][13] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 15       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST15:
+echo "  subtest-15\n";
+$test_cfg['subtests'][15] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) multi-scope tokens (DEV-436), issuing: scope is a string or an array of 1..8 valid values; the token gets the type
+//    requested; a missing / empty / invalid scope is refused with 400 and no token is issued
+$kid_any = bin2hex(random_bytes(16));                         // keymgmt:use:<kid> needs no existing key
+$eight = array("keymgmt:list");
+for ($i = 0; $i < 7; $i++) $eight[] = "keymgmt:use:" . bin2hex(random_bytes(16));
+$cases = array();
+foreach (array("scope claim missing" => null, "scope \"\"" => "", "scope []" => array(), "scope null" => "null",
+               "scope number" => 5, "scope bool" => true, "scope object" => new stdClass(),
+               "keymgmt:delXYZ (trailing data)" => "keymgmt:delXYZ", "uppercase" => "KEYMGMT:LIST", "trailing space" => "keymgmt:list ",
+               "with #" => "keymgmt:list#x", "45 chars" => "keymgmt:use:" . $kid_any . "0", "not a scope (system:reboot)" => "system:reboot",
+               "x509 scope (ca:sign)" => "ca:sign", "keymgmt:use: non-hex KID" => "keymgmt:use:" . str_repeat("zz", 16),
+               "keymgmt:use: 30 hex" => "keymgmt:use:" . substr($kid_any, 2), "storage:disk0:xx" => "storage:disk0:xx", "storage:disk9" => "storage:disk9",
+               "array of 9" => array_merge($eight, array("logger:get")), "element number" => array("keymgmt:list", 1),
+               "element null" => array(null), "element bool" => array(true), "nested array" => array(array("keymgmt:list")),
+               "element object" => array(new stdClass()), "element \"\"" => array(""), "duplicate" => array("keymgmt:list", "keymgmt:list"),
+               "two storage" => array("storage:disk0", "storage:disk1"), "storage:disk0 + storage:disk0:rw" => array("storage:disk0", "storage:disk0:rw")) as $name => $scope) {
+  $cases[] = array("auth/token, $name", auth_with_claims(function($c) use ($scope) {
+    if ($scope === null) unset($c['scope']); else $c['scope'] = ($scope === "null") ? null : $scope;
+    return $c; }), 400);
+}
+foreach (array("string" => "keymgmt:list", "array of 1" => array("keymgmt:list"), "array of 8 (7 x 44 chars)" => $eight,
+               "keymgmt:use:<kid of no key>" => "keymgmt:use:$kid_any", "storage:disk0:rw" => "storage:disk0:rw",
+               "keymgmt:list + storage:disk1:ro" => array("keymgmt:list", "storage:disk1:ro")) as $name => $scope) {
+  $cases[] = array("auth/token, $name", auth_with_claims(function($c) use ($scope) { $c['scope'] = $scope; return $c; }), 200);
+}
+if ( !check_cases($cases) ) goto print_and_exit;
+// b) the issued token keeps the type requested
+$t = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");
+$t1 = helper_authorize($cfg_domain, $cfg_passpharse, array("keymgmt:list"));
+$t8 = helper_authorize($cfg_domain, $cfg_passpharse, $eight);
+if ( ($t == false) || ($t1 == false) || ($t8 == false) ) goto print_and_exit;
+$p = extauth_payload($t); $p1 = extauth_payload($t1); $p8 = extauth_payload($t8);
+if ( $p['scope'] !== "keymgmt:list" ) { echo "    string request: token scope " . json_encode($p['scope']) . "\n"; goto print_and_exit; }
+if ( $p1['scope'] !== array("keymgmt:list") ) { echo "    1-element array request: token scope " . json_encode($p1['scope']) . "\n"; goto print_and_exit; }
+if ( $p8['scope'] !== $eight ) { echo "    8-element array request: token scope " . json_encode($p8['scope']) . "\n"; goto print_and_exit; }
+if ( !check_alive($uptime) ) goto print_and_exit;
+// c) set result
+$test_cfg['subtests'][15] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 16       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST16:
+echo "  subtest-16\n";
+$test_cfg['subtests'][16] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) multi-scope tokens (DEV-436), access: the values of an array are checked in order, the first one the endpoint
+//    accepts grants access (exact match; storage takes the disk and :rw from the matching value)
+$not_used = false;
+$t_list = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");
+$t_arr = helper_authorize($cfg_domain, $cfg_passpharse, array("logger:get", "keymgmt:list"));
+$t_cfg2 = helper_authorize($cfg_domain, $cfg_passpharse, array("keymgmt:list", "system:config"));
+$t_st = helper_authorize($cfg_domain, $cfg_passpharse, array("keymgmt:list", "storage:disk0"));
+$t_use8 = array();
+for ($i = 0; $i < 8; $i++) $t_use8[] = "keymgmt:use:" . bin2hex(random_bytes(16));
+$t_use8 = helper_authorize($cfg_domain, $cfg_passpharse, $t_use8);
+$t_wc = helper_authorize($cfg_domain, $cfg_passpharse, $eight);   // from subtest 15: keymgmt:list first, then 7 x 44 chars
+if ( ($t_list == false) || ($t_arr == false) || ($t_cfg2 == false) || ($t_st == false) || ($t_use8 == false) || ($t_wc == false) ) goto print_and_exit;
+$ret_val = false;
+if ( http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/list", $ret_val, $not_used, $t_list) != 200 ) goto print_and_exit;
+if ( !isset($ret_val['list'][0]['kid']) ) { echo "    no key on the TOE for the KID case\n"; goto print_and_exit; }
+$kid = $ret_val['list'][0]['kid'];
+$t_kid = helper_authorize($cfg_domain, $cfg_passpharse, array("logger:get", "keymgmt:use:$kid"));
+$t_kid2 = helper_authorize($cfg_domain, $cfg_passpharse, array("logger:get", "keymgmt:use:" . bin2hex(random_bytes(16))));
+if ( ($t_kid == false) || ($t_kid2 == false) ) goto print_and_exit;
+$cases = array();
+foreach (array("array, 2nd value matches (keymgmt/list)" => array("/api/keymgmt/list", $t_arr, 200),
+               "array, 1st value matches (logger/list/0)" => array("/api/logger/list/0", $t_arr, 200),
+               "array, no value matches (storage/unlock)" => array("/api/storage/unlock", $t_arr, 403),
+               "array, system:config 2nd (system/config)" => array("/api/system/config", $t_cfg2, 200),
+               "string keymgmt:list (keymgmt/list)" => array("/api/keymgmt/list", $t_list, 200),
+               "string keymgmt:list (system/config)" => array("/api/system/config", $t_list, 403),
+               "worst-case token, 8 values (keymgmt/list)" => array("/api/keymgmt/list", $t_wc, 200),
+               "8 x keymgmt:use:<other> (keymgmt/list)" => array("/api/keymgmt/list", $t_use8, 403),
+               "array, keymgmt:use:<kid> 2nd (keymgmt/get/<kid>)" => array("/api/keymgmt/get/$kid", $t_kid, 200),
+               "array, keymgmt:use:<other kid> (keymgmt/get/<kid>)" => array("/api/keymgmt/get/$kid", $t_kid2, 403),
+               "array, storage:disk0 2nd (storage/unlock)" => array("/api/storage/unlock", $t_st, 200),
+               "array, storage:disk0 (storage/unlock/rw, ro value)" => array("/api/storage/unlock/rw", $t_st, 403),
+               "array, storage:disk0 (storage/lock)" => array("/api/storage/lock", $t_st, 200),
+               "string token, crypto/random (no scope)" => array("/api/crypto/random", $t_list, 200),
+               "array token, crypto/random (no scope)" => array("/api/crypto/random", $t_arr, 200),
+               "string token, system/selftest (no scope)" => array("/api/system/selftest", $t_list, 200),
+               "array token, system/selftest (no scope)" => array("/api/system/selftest", $t_arr, 200),
+               "string token, config/attestation (no scope)" => array("/api/system/config/attestation", $t_list, 200),
+               "array token, config/attestation (no scope)" => array("/api/system/config/attestation", $t_arr, 200)) as $name => $v) {
+  $ret_val = false;
+  $cases[] = array($name, http_transaction("https", "GET", $cfg_domain, $v[0], $ret_val, $not_used, $v[1]), $v[2]);
+}
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// b) set result
+$test_cfg['subtests'][16] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 17       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST17:
+echo "  subtest-17\n";
+$test_cfg['subtests'][17] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) multi-scope tokens (DEV-436), external authenticator directly with the HEM (libs/extauth.php): ext/request takes a
+//    string or an array (same rules as auth/token), the sealed plaintext is the values separated by spaces; ext/token
+//    issues a string for one value and an array for more; a tampered blob fails the MAC
+$app = false;
+$code_ok = false;
+if ( extauth_pair_direct($cfg_domain, $token_cfg, "T-15 ExtAuth DEV-436", $app, $code_ok) != 200 ) goto print_and_exit;
+foreach (array(array(array("keymgmt:list"), "keymgmt:list", "keymgmt:list"),
+               array(array("keymgmt:list", "logger:get"), "keymgmt:list logger:get", array("keymgmt:list", "logger:get")),
+               array("keymgmt:list", "keymgmt:list", "keymgmt:list")) as $v) {
+  $authreq = false;
+  if ( extauth_request_direct($cfg_domain, $v[0], $authreq) != 200 ) { echo "    ext/request " . json_encode($v[0]) . " refused\n"; goto print_and_exit; }
+  $sealed = isset($authreq['scope'][$app['pid']]) ? $authreq['scope'][$app['pid']] : false;
+  $m = extauth_session_key($app['aid_prv'], $app['eid'], $authreq['jti']);
+  $plain = extauth_unseal($sealed, $m);
+  if ( $plain !== $v[1] ) { echo "    ext/request " . json_encode($v[0]) . ": sealed plaintext " . var_export($plain, true) . "\n"; goto print_and_exit; }
+  $t = false;
+  if ( extauth_token_direct($cfg_domain, $app, $authreq['jti'], $sealed, $t) != 200 ) { echo "    ext/token " . json_encode($v[0]) . " refused\n"; goto print_and_exit; }
+  $p = extauth_payload($t);
+  if ( $p['scope'] !== $v[2] ) { echo "    ext/token " . json_encode($v[0]) . ": token scope " . json_encode($p['scope']) . "\n"; goto print_and_exit; }
+}
+$ret_val = false;
+$not_used = false;
+if ( http_transaction("https", "GET", $cfg_domain, "/api/system/config", $ret_val, $not_used, $t) != 403 ) { echo "    ext token keymgmt:list accepted by system/config\n"; goto print_and_exit; }
+// b) the KID info (#...) is added for the first keymgmt:use: value of a list
+$authreq = false;
+if ( extauth_request_direct($cfg_domain, array("keymgmt:use:$kid", "logger:get"), $authreq) != 200 ) goto print_and_exit;
+$m = extauth_session_key($app['aid_prv'], $app['eid'], $authreq['jti']);
+$plain = extauth_unseal(isset($authreq['scope'][$app['pid']]) ? $authreq['scope'][$app['pid']] : false, $m);
+if ( !is_string($plain) || (strpos($plain, "keymgmt:use:$kid logger:get#") !== 0) ) { echo "    KID info: " . var_export($plain, true) . "\n"; goto print_and_exit; }
+if ( ($authreq['exp'] - $authreq['iat']) != 900 ) { echo "    KID request lifetime " . ($authreq['exp'] - $authreq['iat']) . " s, expected 900\n"; goto print_and_exit; }
+// c) a 2-value token from ext works on the endpoint of its 2nd value; a tampered blob is refused
+$authreq = false;
+if ( extauth_request_direct($cfg_domain, array("keymgmt:list", "logger:get"), $authreq) != 200 ) goto print_and_exit;
+$sealed = $authreq['scope'][$app['pid']];
+$raw = base64_decode(substr($sealed, 1));
+$raw[0] = chr(ord($raw[0]) ^ 1);
+$t = false;
+$t2 = false;
+$cases = array();
+$cases[] = array("ext/token, tampered blob", extauth_token_direct($cfg_domain, $app, $authreq['jti'], "A" . base64_encode($raw), $t2), 406);
+$cases[] = array("ext/token, 2 values", extauth_token_direct($cfg_domain, $app, $authreq['jti'], $sealed, $t), 200);
+$ret_val = false;
+$cases[] = array("ext token [keymgmt:list, logger:get], logger/list/0", http_transaction("https", "GET", $cfg_domain, "/api/logger/list/0", $ret_val, $not_used, $t), 200);
+// d) ext/request refuses what auth/token refuses
+foreach (array("\"\"" => "", "[]" => array(), "array of 9" => array_merge($eight, array("logger:get")), "trailing data" => "keymgmt:delXYZ",
+               "duplicate" => array("logger:get", "logger:get"), "null" => null, "number" => 5) as $name => $scope) {
+  $authreq = false;
+  $cases[] = array("ext/request, scope $name", extauth_request_direct($cfg_domain, $scope, $authreq), 400);
+}
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// e) set result
+$test_cfg['subtests'][17] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////

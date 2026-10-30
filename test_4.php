@@ -80,6 +80,17 @@ $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config", 
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200
 if ($last_update_ts >= $ret_val['uts']) goto print_and_exit;  //'uts' update as changes applied correctly
+// d2) policy (DEV-447): set once at personalisation (T-2) - readable in GET config; POST config with it -> 400, nothing applied
+if ( @$ret_val['policy'] !== array("raw_ecdh_enabled", "pubkey_in_search", "pubkey_in_list") ) { echo "    GET config policy: " . json_encode(@$ret_val['policy']) . "\n"; goto print_and_exit; }
+$t4_user = $ret_val['user'];
+foreach (array(array('policy' => array()), array('policy' => array("raw_ecdh_enabled"), 'user' => $t4_user . "-x")) as $bad) {
+  $r = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $r, json_encode($bad), $token);
+  if ( $ret_stat != 400 ) { echo "    POST config " . json_encode($bad) . ": HTTP $ret_stat, expected 400\n"; goto print_and_exit; }
+}
+$r = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config", $r, $not_used, $token);
+if ( ($ret_stat != 200) || ($r['user'] !== $t4_user) ) { echo "    POST config with policy changed 'user'\n"; goto print_and_exit; }
 // e) CORS origin change (DEV-426, DEV-438 N8): a list of allowed origins - each entry compared as a whole and case-insensitively,
 //    "*.domain" = one label more; a request from an origin not on the list gets 412, a request without Origin (this tester)
 //    is not affected; the previous value is restored even if a check fails
@@ -187,7 +198,7 @@ if ($token_correct == false) goto print_and_exit;                    // exit on 
 //$token_details = json_decode(base64_decode($token_parts[1]), true);
 //echo "    scope=" . $token_details['scope'] ." role=" . $token_details['sub'] . " expire=" . $token_details['exp'] . "\n";
 //token with invalid scope
-$token_wrong = helper_authorize($cfg_domain, $cfg_passpharse, "system:reboot");
+$token_wrong = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");   // DEV-436: a valid scope of another endpoint ("system:reboot" is not a scope - 400 at auth/token)
 if ($token_wrong == false) goto print_and_exit;                    // exit on error
 //echo "  USER token: $token_wrong\n";
 //$token_parts = explode(".", $token_wrong);

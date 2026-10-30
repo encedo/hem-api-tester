@@ -7,7 +7,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-6";
 $test_descr = "External authenticator usage functionality";
-$test_subtest_cnt = 2;
+$test_subtest_cnt = 3;   // DEV-436: 3 = multi-scope request
 
 
 // initialize the execution env
@@ -159,6 +159,72 @@ Otherwise the object is generated generated and 'deny'=true is returned. That is
 */
 // e) set result
 $test_cfg['subtests'][2] = 'OK';                           // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 3        ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST3:
+echo "  subtest-3\n";
+$test_cfg['subtests'][3] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) REMOTE USER authentication with a multi-scope request (DEV-436): scope array -> the app gets the values separated by
+//    spaces, approves them -> the token scope is an array and grants both endpoints
+$ret_val = false;
+$ret_stat = http_transaction("https", "GET", "api.encedo.com", "/notify/session", $ret_val, $post_data);
+if ( $cfg_debug ) var_dump( $ret_val );
+if ( $ret_stat != 200 ) goto print_and_exit;
+$epk = $ret_val['epk'];
+$req = array( 'epk' => $epk, 'exp' => time()+120, 'scope' => array("keymgmt:list", "system:config"));
+$post_data = json_encode( $req );
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/request", $ret_val, $post_data);
+if ( $cfg_debug ) var_dump( $ret_val );
+if ( $ret_stat != 200 ) goto print_and_exit;
+$auth_challange = $ret_val;
+$ret_val = false;
+$post_data = $auth_challange;
+$ret_stat = http_transaction("https", "POST", "api.encedo.com", "/notify/event/new", $ret_val, $post_data);
+if ( $cfg_debug ) var_dump( $ret_val );
+if ( $ret_stat != 200 ) goto print_and_exit;
+$eventid = $ret_val['eventid'];
+@file_put_contents( __DIR__ . "/out/extauth_exchange.json", json_encode( array('type' => "event", 'eventid' => $eventid, 'expect' => "allow") ) );   // for ExtAuth_Simulator.php
+echo "    check mobile app for notification - got 60sec\n";
+$count = 0;
+do {
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "GET", "api.encedo.com", "/notify/event/check/$eventid", $ret_val);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 202 ) break;                              // 202 when pending, 200 when the app answered
+  $count++;
+  if ($count > 12) break;
+  sleep(5);
+} while (true);
+if ( $ret_stat != 200 ) goto print_and_exit;
+if (isset($ret_val['deny']) ) goto print_and_exit;
+$authreply = $ret_val['authreply'];
+$ret_val = false;
+$post_data = json_encode( array('authreply' => $authreply) );
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/token", $ret_val, $post_data);
+if ( $cfg_debug ) var_dump( $ret_val );
+if ( $ret_stat != 200 ) goto print_and_exit;
+$token = $ret_val['token'];
+// b) the token scope is the approved array
+$token_parts = explode(".", $token);
+$token_details = json_decode(base64url_decode($token_parts[1]), true);
+if ( $token_details['scope'] !== array("keymgmt:list", "system:config") ) { echo "    token scope " . json_encode($token_details['scope']) . "\n"; goto print_and_exit; }
+// c) both values work
+$ret_val = false;
+$post_data = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token);
+if ( $ret_stat != 200 ) { echo "    system/config with the array token: HTTP $ret_stat\n"; goto print_and_exit; }
+$ret_val = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/list", $ret_val, $post_data, $token);
+if ( $ret_stat != 200 ) { echo "    keymgmt/list with the array token: HTTP $ret_stat\n"; goto print_and_exit; }
+// d) set result
+$test_cfg['subtests'][3] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////

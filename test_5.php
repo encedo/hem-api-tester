@@ -142,7 +142,7 @@ TEST2:
 echo "  subtest-2\n";
 $test_cfg['subtests'][2] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) perform local USER authentication
-$token_incorrect = helper_authorize($cfg_domain, $cfg_passpharse, "system:wrong");
+$token_incorrect = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");   // DEV-436: a valid scope of another endpoint ("system:wrong" is not a scope - 400 at auth/token)
 if ($token_incorrect == false) goto print_and_exit;                    // exit on error
 // b) get EID - reuser correct token
 $ret_val = false;
