@@ -118,12 +118,15 @@ $init_val = array(                                 //compose TOE req init data
       'trusted_backend' => true,
       'allow_keysearch' => true,
       'gen_csr' => true,
-      'origin' => "*"
+      'origin' => "*",
+      'policy' => (getenv("ENCEDO_T2_POLICY") !== false) ? json_decode(getenv("ENCEDO_T2_POLICY"), true)   // DEV-447: set once at personalisation;
+                  : array("raw_ecdh_enabled", "pubkey_in_search", "pubkey_in_list")                       //   ENCEDO_T2_POLICY (JSON array) overrides it - T-16
       )
   );
 // f2) invalid initialization data is refused and the TOE stays not initialised (DEV-438): master key shorter than
 //     32 bytes, netmask prefix out of range (PPA)
-$bad_cfgs = array( array('masterkey' => base64_encode(substr($admin_public_key, 0, 31))) );
+$bad_cfgs = array( array('masterkey' => base64_encode(substr($admin_public_key, 0, 31))),
+                   array('policy' => array("bogus")), array('policy' => "raw_ecdh_enabled") );   // DEV-447: unknown name, not an array
 if ( $test_cfg['conf'] == "ENCEDO PPA" ) {
   $bad_cfgs[] = array('ip' => "192.168.7.1/33");
   $bad_cfgs[] = array('ip' => "192.168.7.1/-1");

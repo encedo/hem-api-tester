@@ -612,9 +612,49 @@ foreach($keychain as $item) {
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, json_encode(array('kid' => $kid, 'pubkey' => $pubkey, 'alg' => "HKDF-SHA2-256") + $bad), $token);
     if ( $ret_stat != 400 ) { echo "ERROR: ECDH $type " . json_encode(array_keys($bad)) . " over the limit: HTTP $ret_stat (expected 400)\n"; goto print_and_exit; }
   }
+  // reserved hkdf_ctx prefix (DEV-447): internal labels "encedo-..." -> 400; the prefix counts only at the start
+  foreach (array("encedo-derive:v1:secp256r1" => 400, "encedo-wrap:v1:x" => 400, "encedo-" => 400, "encedo" => 200, "x-encedo-" => 200) as $ctx => $exp) {
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, json_encode(array('kid' => $kid, 'pubkey' => $pubkey, 'alg' => "HKDF-SHA2-256", 'hkdf_ctx' => base64_encode($ctx))), $token);
+    if ( $ret_stat != $exp ) { echo "ERROR: ECDH $type hkdf_ctx \"$ctx\": HTTP $ret_stat (expected $exp)\n"; goto print_and_exit; }
+  }
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, json_encode(array('kid' => $kid, 'pubkey' => $pubkey, 'alg' => "HKDF-SHA2-256", 'hkdf_salt' => base64_encode(str_repeat("s", 128)), 'hkdf_ctx' => base64_encode(str_repeat("c", 128)))), $token);
   if ( ($ret_stat != 200) || (base64_decode($ret_val['ecdh']) !== hash_hkdf('sha256', $z, 0, str_repeat("c", 128), str_repeat("s", 128))) ) { echo "ERROR: ECDH $type HKDF with 128 B salt/ctx\n"; goto print_and_exit; }
+  // DEV-468: hkdf_args - one ECDH, up to 8 HKDF derivations; each equals the local HKDF, item 1 equals the single-set call
+  $set = array();
+  for ($i = 0; $i < 8; $i++) $set[] = array('hkdf_salt' => base64_encode("salt-$i-$type"), 'hkdf_ctx' => base64_encode("ctx-$i"), 'hkdf_len' => 16 + 8 * $i);
+  $set[3] = new stdClass();                                  // all defaults: no salt, no ctx, 32 B
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, json_encode(array('kid' => $kid, 'pubkey' => $pubkey, 'alg' => "HKDF-SHA2-256", 'hkdf_args' => $set)), $token);
+  if ( ($ret_stat != 200) || !is_array(@$ret_val['hkdf']) || (count($ret_val['hkdf']) != 8) ) { echo "ERROR: ECDH $type hkdf_args: HTTP $ret_stat " . json_encode($ret_val) . "\n"; goto print_and_exit; }
+  foreach ($set as $i => $a) {
+    $a = (array)$a;
+    $exp = hash_hkdf('sha256', $z, isset($a['hkdf_len']) ? $a['hkdf_len'] : 32, isset($a['hkdf_ctx']) ? base64_decode($a['hkdf_ctx']) : '', isset($a['hkdf_salt']) ? base64_decode($a['hkdf_salt']) : '');
+    if ( base64_decode($ret_val['hkdf'][$i]) !== $exp ) { echo "ERROR: ECDH $type hkdf_args item $i differs from the local HKDF\n"; goto print_and_exit; }
+  }
+  $first = $ret_val['hkdf'][0];
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, json_encode(array('kid' => $kid, 'pubkey' => $pubkey, 'alg' => "HKDF-SHA2-256") + $set[0]), $token);
+  if ( ($ret_stat != 200) || ($ret_val['ecdh'] !== $first) ) { echo "ERROR: ECDH $type hkdf_args item 1 differs from the single-set call\n"; goto print_and_exit; }
+  // errors (nothing derived): 9 items, empty, mixed with a single field, a bad item, no HKDF alg, not an array
+  $bad = array(
+    "9 items" => array('alg' => "HKDF-SHA2-256", 'hkdf_args' => array_merge($set, array(new stdClass()))),
+    "empty" => array('alg' => "HKDF-SHA2-256", 'hkdf_args' => array()),
+    "with hkdf_salt" => array('alg' => "HKDF-SHA2-256", 'hkdf_salt' => base64_encode("s"), 'hkdf_args' => array(new stdClass())),
+    "with hkdf_len" => array('alg' => "HKDF-SHA2-256", 'hkdf_len' => 32, 'hkdf_args' => array(new stdClass())),
+    "salt 129 B" => array('alg' => "HKDF-SHA2-256", 'hkdf_args' => array(array('hkdf_salt' => base64_encode(str_repeat("s", 129))))),
+    "reserved ctx" => array('alg' => "HKDF-SHA2-256", 'hkdf_args' => array(new stdClass(), array('hkdf_ctx' => base64_encode("encedo-wrap:v1:")))),
+    "len 15" => array('alg' => "HKDF-SHA2-256", 'hkdf_args' => array(array('hkdf_len' => 15))),
+    "item not an object" => array('alg' => "HKDF-SHA2-256", 'hkdf_args' => array("x")),
+    "alg SHA2-256" => array('alg' => "SHA2-256", 'hkdf_args' => array(new stdClass())),
+    "not an array" => array('alg' => "HKDF-SHA2-256", 'hkdf_args' => new stdClass()),
+  );
+  foreach ($bad as $what => $extra) {
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, json_encode(array('kid' => $kid, 'pubkey' => $pubkey) + $extra), $token);
+    if ( $ret_stat != 400 ) { echo "ERROR: ECDH $type hkdf_args $what: HTTP $ret_stat (expected 400)\n"; goto print_and_exit; }
+  }
   //additional tests - ECDH as a source of secrets for hmac,encryption&wrap
   //reuse code from subtest1,3&4
   //echo "HMAC - EXT_KID\n";

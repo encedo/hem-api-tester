@@ -554,7 +554,7 @@ function t10_search($domain, $token, $args) {
     if ( $ret_stat != 200 ) return $ret_stat;
     foreach ($ret_val['list'] as $item) $all[] = $item;
     $offset += $ret_val['listed'];
-  } while ( $ret_val['listed'] == 15 );
+  } while ( $ret_val['listed'] > 0 );   // DEV-447: a page can be shorter than 15 (at most 3 PQC public keys per page) - read until an empty page
   return $all;
 }
 TEST4:
@@ -616,6 +616,30 @@ foreach (array("", "^", "\$") as $descr) {
 }
 if ( t10_search($cfg_domain, $token_keylist, array('descr' => "^" . base64_encode(str_repeat("A", 129)))) !== 400 ) goto print_and_exit;
 if ( !is_array(t10_search($cfg_domain, $token_keylist, array('descr' => "^" . base64_encode(str_repeat("A", 128))))) ) goto print_and_exit;
+// h) list with public keys (DEV-447): /list/<offset>/<count>/pubkey with the pubkey_in_list policy (T-2); without the segment none; unknown segment -> 400
+$ret_val = false; $not_used = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/list/0/15/pubkey", $ret_val, $not_used, $token_keylist);
+$n = 0; foreach ((array)@$ret_val['list'] as $item) if ( isset($item['pubkey']) ) $n++;
+if ( ($ret_stat != 200) || ($n == 0) ) { echo "ERROR: list/0/15/pubkey: HTTP $ret_stat, $n public keys\n"; goto print_and_exit; }
+$ret_val = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/list/0/15", $ret_val, $not_used, $token_keylist);
+foreach ((array)@$ret_val['list'] as $item) if ( isset($item['pubkey']) ) { echo "ERROR: list/0/15 returned a public key\n"; goto print_and_exit; }
+$ret_val = false;
+if ( http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/list/0/15/bogus", $ret_val, $not_used, $token_keylist) != 400 ) { echo "ERROR: list/0/15/bogus not rejected\n"; goto print_and_exit; }
+// i) at most 3 PQC public keys on a page (DEV-447): 5 ML-DSA-44 keys, search with return_pubkey -> the page ends after the 3rd, the rest on the next page
+$token_keygen = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:gen");
+if ($token_keygen == false) goto print_and_exit;
+$t10_run = bin2hex(openssl_random_pseudo_bytes(3));            // unique per run - the keys stay until the next wipeout
+for ($i = 0; $i < 5; $i++) {
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, json_encode(array('label' => "T-10.4 PQC $i", 'type' => "MLDSA44", 'descr' => base64_encode("CCTEST:T-10.4_PQC_" . $t10_run . "_$i"))), $token_keygen);
+  if ( $ret_stat != 200 ) { echo "ERROR: create MLDSA44: HTTP $ret_stat\n"; goto print_and_exit; }
+}
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/search", $ret_val, json_encode(array('descr' => "^" . base64_encode("CCTEST:T-10.4_PQC_" . $t10_run . "_"), 'return_pubkey' => true)), $token_keylist);
+if ( ($ret_stat != 200) || (@$ret_val['listed'] != 3) ) { echo "ERROR: PQC page: HTTP $ret_stat, listed " . @$ret_val['listed'] . " (expected 3)\n"; goto print_and_exit; }
+$list = t10_search($cfg_domain, $token_keylist, array('descr' => "^" . base64_encode("CCTEST:T-10.4_PQC_" . $t10_run . "_"), 'return_pubkey' => true));
+if ( !is_array($list) || (count($list) != 5) ) { echo "ERROR: PQC pages: " . (is_array($list) ? count($list) : "HTTP $list") . " keys (expected 5)\n"; goto print_and_exit; }
 // e) set result
 $test_cfg['subtests'][4] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
