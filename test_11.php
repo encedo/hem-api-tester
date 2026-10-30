@@ -7,7 +7,16 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-11";
 $test_descr = "Cryptography functionality";
-$test_subtest_cnt = 9;
+$test_subtest_cnt = 10;
+
+
+function t11_ossl($args) {                  // OpenSSL CLI (>= 3.5); returns true on exit code 0 - as t13_ossl (T-13)
+  $bin = getenv("ENCEDO_OPENSSL") ? getenv("ENCEDO_OPENSSL") : "openssl";
+  $cmd = escapeshellarg($bin);
+  foreach ($args as $a) $cmd .= " " . escapeshellarg($a);
+  exec($cmd . " 2>&1", $out, $rc);
+  return ($rc == 0);
+}
 
 
 // initialize the execution env
@@ -291,6 +300,26 @@ foreach($keys_to_test as $item) {
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
+    // DEV-481 (A6): det:true - RFC 6979, the same signature twice and still valid; det not a bool -> 400
+    $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "SHA256WithECDSA", 'det' => true);
+    $post_data = json_encode( $oper_arg );
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);
+    if ( $ret_stat != 200 ) goto print_and_exit;
+    $sign_det = $ret_val['sign'];
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);
+    if ( ($ret_stat != 200) || ($ret_val['sign'] !== $sign_det) ) { echo "ERROR: det:true signatures differ ($type)\n"; goto print_and_exit; }
+    unset($oper_arg['det']);
+    $oper_arg['sign'] = $sign_det;
+    $post_data = json_encode( $oper_arg );
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
+    if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;
+    $post_data = json_encode( array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "SHA256WithECDSA", 'det' => "yes") );
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);
+    if ( $ret_stat != 400 ) { echo "ERROR: det \"yes\": HTTP $ret_stat (400 expected)\n"; goto print_and_exit; }
     $counter++;
   }
 }
@@ -386,11 +415,33 @@ foreach($keychain as $item) {
   $msg_test = $ret_val['plaintext'];
   //compare
   if ($msg != $msg_test) goto print_and_exit;    //expected is 200 on success
+  // DEV-481 (A7): CBC padding checked in full - the last ciphertext block cut off, the message end is read as padding
+  foreach (array("\x05" => 406, "\x03\x03\x03" => 200) as $tail => $want) {
+    $raw = substr(openssl_random_pseudo_bytes(96), 0, 96 - strlen($tail) - 4) . "\xAA\xAA\xAA\xAA" . $tail;
+    $post_array = array('kid' => $kid, 'msg' => base64_encode($raw), 'alg' => $alg);
+    $post_data = json_encode( $post_array );
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/encrypt", $ret_val, $post_data, $token);
+    if ( $ret_stat != 200 ) goto print_and_exit;
+    $post_array['msg'] = base64_encode(substr(base64_decode($ret_val['ciphertext']), 0, 96));
+    $post_array['iv'] = $ret_val['iv'];
+    $post_data = json_encode( $post_array );
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/decrypt", $ret_val, $post_data, $token);
+    if ( $ret_stat != $want ) { echo "ERROR: CBC padding " . bin2hex($tail) . ": HTTP $ret_stat ($want expected)\n"; goto print_and_exit; }
+    if ( ($want == 200) && (base64_decode($ret_val['plaintext']) !== substr($raw, 0, 93)) ) goto print_and_exit;
+  }
   //AES in GCM mode
   //encrypt example message
   $msg = base64_encode( openssl_random_pseudo_bytes( 100 ) ); //GCM can handle any message size
-  $aad = base64_encode( openssl_random_pseudo_bytes( 32 ) );
   $alg = "$type-GCM";
+  // DEV-481 (A5): aad over the limit (257 B) -> 400
+  $post_array = array('kid' => $kid, 'msg' => $msg, 'alg' => $alg, 'aad' => base64_encode( openssl_random_pseudo_bytes( 257 ) ));
+  $post_data = json_encode( $post_array );
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/encrypt", $ret_val, $post_data, $token);
+  if ( $ret_stat != 400 ) { echo "ERROR: GCM aad 257 B: HTTP $ret_stat (400 expected)\n"; goto print_and_exit; }
+  $aad = base64_encode( openssl_random_pseudo_bytes( 256 ) );   // DEV-481 (A5): max aad (was 32 B)
   $post_array = array('kid' => $kid, 'msg' => $msg, 'alg' => $alg, 'aad' => $aad);
   $post_data = json_encode( $post_array );
   $ret_val = false;
@@ -980,6 +1031,9 @@ foreach($keychain as $item) {
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mlkem/decaps", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;        // expected is 200 - HMAC verify success
+  // DEV-481 (A3): decaps "alg" is the key type (was the scope string)
+  $item_type = explode(",", $item['type']);
+  if (@$ret_val['alg'] !== $item_type[count($item_type) - 1]) { echo "ERROR: decaps alg " . @$ret_val['alg'] . "\n"; goto print_and_exit; }
   // compate two SS values - should be equal
   if ($ss_encaps !== $ret_val['ss']) goto print_and_exit;
   $counter++;
@@ -1050,6 +1104,84 @@ echo "    Executed $counter tests over ". count($keychain) . " keys\n";
 if ($counter != count($keychain)) goto print_and_exit;
 // d) set result
 $test_cfg['subtests'][9] = 'OK';                           // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 10       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST10:
+echo "  subtest-10\n";
+$test_cfg['subtests'][10] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// DEV-481 (A1, A2): ML-DSA verify and ML-KEM encaps on imported public keys; host side OpenSSL CLI >= 3.5
+$token_keyimp = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:imp");
+if ($token_keyimp == false) goto print_and_exit;
+$token_keydel = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:del");
+if ($token_keydel == false) goto print_and_exit;
+$dir = sys_get_temp_dir() . "/t11_" . bin2hex(openssl_random_pseudo_bytes(4));
+@mkdir($dir);
+$imported = array();
+// a) ML-DSA-65: key pair on the host, public key imported, host signature verified by HEM
+if (!t11_ossl(array("genpkey", "-algorithm", "ML-DSA-65", "-out", "$dir/d.pem"))) { echo "ERROR: openssl >= 3.5 needed\n"; goto t11_10_end; }
+t11_ossl(array("pkey", "-in", "$dir/d.pem", "-pubout", "-outform", "DER", "-out", "$dir/d.der"));
+$msg = openssl_random_pseudo_bytes(250);
+file_put_contents("$dir/m.bin", $msg);
+if (!t11_ossl(array("pkeyutl", "-sign", "-rawin", "-inkey", "$dir/d.pem", "-in", "$dir/m.bin", "-out", "$dir/s.bin"))) goto t11_10_end;
+$ret_val = false;
+$post_data = json_encode(array('label' => "T-11.10 IMP MLDSA65", 'type' => "MLDSA65", 'descr' => base64_encode("CCTEST:T-11.10_MLDSA65_imported"), 'pubkey' => base64_encode(substr(file_get_contents("$dir/d.der"), -1952))));
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/import", $ret_val, $post_data, $token_keyimp);
+if ( $ret_stat != 200 ) { echo "ERROR: import MLDSA65: HTTP $ret_stat\n"; goto t11_10_end; }
+$kid = $ret_val['kid'];
+$imported[] = $kid;
+$token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid");
+if ($token == false) goto t11_10_end;
+$sig = file_get_contents("$dir/s.bin");
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mldsa/verify", $ret_val, json_encode(array('kid' => $kid, 'msg' => base64_encode($msg), 'sign' => base64_encode($sig))), $token);
+if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) { echo "ERROR: verify (imported MLDSA65): HTTP $ret_stat\n"; goto t11_10_end; }
+$sig[100] = chr(ord($sig[100]) ^ 1);                          // one bit changed
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mldsa/verify", $ret_val, json_encode(array('kid' => $kid, 'msg' => base64_encode($msg), 'sign' => base64_encode($sig))), $token);
+if ( ($ret_stat != 200) || (@$ret_val['verified'] !== false) ) { echo "ERROR: verify of a bad signature: HTTP $ret_stat\n"; goto t11_10_end; }
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mldsa/sign", $ret_val, json_encode(array('kid' => $kid, 'msg' => base64_encode($msg))), $token);
+if ( $ret_stat != 406 ) { echo "ERROR: sign on a public key: HTTP $ret_stat (406 expected)\n"; goto t11_10_end; }
+// b) ML-KEM-768: public key imported, HEM encaps, host decaps, the same shared secret
+if (!t11_ossl(array("genpkey", "-algorithm", "ML-KEM-768", "-out", "$dir/k.pem"))) goto t11_10_end;
+t11_ossl(array("pkey", "-in", "$dir/k.pem", "-pubout", "-outform", "DER", "-out", "$dir/k.der"));
+$ret_val = false;
+$post_data = json_encode(array('label' => "T-11.10 IMP MLKEM768", 'type' => "MLKEM768", 'descr' => base64_encode("CCTEST:T-11.10_MLKEM768_imported"), 'pubkey' => base64_encode(substr(file_get_contents("$dir/k.der"), -1184))));
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/import", $ret_val, $post_data, $token_keyimp);
+if ( $ret_stat != 200 ) { echo "ERROR: import MLKEM768: HTTP $ret_stat\n"; goto t11_10_end; }
+$kid = $ret_val['kid'];
+$imported[] = $kid;
+$token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid");
+if ($token == false) goto t11_10_end;
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mlkem/encaps", $ret_val, json_encode(array('kid' => $kid)), $token);
+if ( $ret_stat != 200 ) { echo "ERROR: encaps (imported MLKEM768): HTTP $ret_stat\n"; goto t11_10_end; }
+if (@$ret_val['alg'] !== "MLKEM768") goto t11_10_end;
+$ct = $ret_val['ct'];
+$ss = $ret_val['ss'];
+file_put_contents("$dir/ct.bin", base64_decode($ct));
+if (!t11_ossl(array("pkeyutl", "-decap", "-inkey", "$dir/k.pem", "-in", "$dir/ct.bin", "-secret", "$dir/ss.bin"))) goto t11_10_end;
+if (base64_encode(file_get_contents("$dir/ss.bin")) !== $ss) { echo "ERROR: host decaps ss differs\n"; goto t11_10_end; }
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mlkem/decaps", $ret_val, json_encode(array('kid' => $kid, 'ct' => $ct)), $token);
+if ( $ret_stat != 400 ) { echo "ERROR: decaps on a public key: HTTP $ret_stat (400 expected)\n"; goto t11_10_end; }
+// c) set result
+$test_cfg['subtests'][10] = 'OK';                            // mark this subtest as OK
+t11_10_end:
+foreach ($imported as $kid) {                                // the imported keys are removed (fresh keys every run)
+  $ret_val = false;
+  $dummy_val = false;
+  $ret_stat = http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/$kid", $ret_val, $dummy_val, $token_keydel);
+  if ( $ret_stat != 200 ) $test_cfg['subtests'][10] = 'ERROR';
+}
+array_map('unlink', glob("$dir/*"));
+@rmdir($dir);
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
