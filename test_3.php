@@ -399,7 +399,7 @@ TEST5:
 echo "  subtest-5\n";
 $test_cfg['subtests'][5] = 'ERROR';                       // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) performe correct user authentication
-$token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config", 30);   // short-lived token - the subtest waits until it expires
+$token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config", 60);   // short-lived token - the subtest waits until it expires (60 s: tolerates a host / device clock offset)
 if ($token == false) goto print_and_exit;
 // b) check token by using it
 $ret_val = false;

@@ -117,8 +117,11 @@ function http_transaction($protocol, $method, $domain, $path, &$ret_data = false
 
   $context = stream_context_create($opts);
   if ($context == false) return false;
-  $cont = @file_get_contents($url, false, $context);
+  $warn = array(); set_error_handler(function($no, $str) use (&$warn) { $warn[] = $str; return true; });	// DEV-473: all warnings of the request (the OpenSSL reason comes before "HTTP request failed!")
+  $cont = file_get_contents($url, false, $context);
+  restore_error_handler();
   if ($cont === false) {
+    echo "  [http_transaction] $method $path: " . ($warn ? implode(" | ", $warn) : "no error info") . "\n";	// DEV-473
     return false;
   }
 
