@@ -7,7 +7,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-9";
 $test_descr = "Audit log functionality";
-$test_subtest_cnt = 2;
+$test_subtest_cnt = 3;
 
 
 // initialize the execution env
@@ -111,7 +111,7 @@ if ( strstr($test_cfg['conf'], "PPA") ) {
   $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/logger/list/0", $ret_val, $dummy_val, $token);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
-  $last_log_id = $ret_val['id'][count($ret_val['id']) - 2];    // get second to the last log id
+  $last_log_id = $ret_val['newest'];                           // DEV-483: the newest downloadable log (the current file is not listed)
   //e) download log file
   $ret_val = false;
   $dummy_val = false;
@@ -196,6 +196,59 @@ $ret = encedo_log_integrity_check($pubkey, $log, $output);
 if ($ret != true) goto print_and_exit;                    // log NOT validated, expected was TRUE
 // e) set result
 $test_cfg['subtests'][2] = 'OK';                           // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 3        ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST3:
+echo "  subtest-3\n";
+$test_cfg['subtests'][3] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
+// DEV-483: /system/status without "logger" (the log works); PPA: logger/list statistics, limit, the current file not listed
+$ret_val = false;
+$dummy_val = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val, $dummy_val);
+if ( ($ret_stat != 200) || isset($ret_val['logger']) ) { echo "ERROR: status logger " . json_encode(@$ret_val['logger']) . "\n"; goto print_and_exit; }
+if ( strstr($test_cfg['conf'], "PPA") ) {
+  $token = helper_authorize($cfg_domain, $cfg_passpharse, "logger:get");
+  if ($token == false) goto print_and_exit;                    // exit on error
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/logger/list/0", $ret_val, $dummy_val, $token);
+  if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
+  $l = $ret_val;
+  foreach (array('offset', 'total', 'listed', 'oldest', 'newest', 'current', 'id') as $f) if (!isset($l[$f])) { echo "ERROR: list/0 without '$f'\n"; goto print_and_exit; }
+  if ( in_array($l['current'], $l['id']) ) { echo "ERROR: the current file is listed\n"; goto print_and_exit; }
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/logger/" . $l['current'], $ret_val, $dummy_val, $token);
+  if ( $ret_stat != 409 ) { echo "ERROR: GET current: HTTP $ret_stat (409 expected)\n"; goto print_and_exit; }
+  foreach (array($l['oldest'], $l['newest']) as $id) {
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/logger/$id", $ret_val, $dummy_val, $token);
+    if ( $ret_stat != 200 ) { echo "ERROR: GET $id: HTTP $ret_stat\n"; goto print_and_exit; }
+  }
+  $sorted = $l['id'];
+  sort($sorted);
+  if ( ($l['total'] <= 128) && (($l['oldest'] !== $sorted[0]) || ($l['newest'] !== end($sorted)) || ($l['listed'] !== $l['total'])) ) { echo "ERROR: oldest / newest / listed\n"; goto print_and_exit; }
+  // limit: slices of list/0, capped at 128; bad limit 400; a page after the end is empty
+  foreach (array(array("0/2", 0, 2), array("1/2", 1, 2), array("0/500", 0, 128)) as $p) {
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/logger/list/" . $p[0], $ret_val, $dummy_val, $token);
+    if ( ($ret_stat != 200) || ($ret_val['id'] !== array_slice($l['id'], $p[1], $p[2])) || ($ret_val['total'] !== $l['total']) ) { echo "ERROR: list/" . $p[0] . ": HTTP $ret_stat\n"; goto print_and_exit; }
+  }
+  foreach (array("0/0", "0/x") as $p) {
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/logger/list/$p", $ret_val, $dummy_val, $token);
+    if ( $ret_stat != 400 ) { echo "ERROR: list/$p: HTTP $ret_stat (400 expected)\n"; goto print_and_exit; }
+  }
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/logger/list/" . $l['total'], $ret_val, $dummy_val, $token);
+  if ( ($ret_stat != 200) || (count($ret_val['id']) != 0) ) { echo "ERROR: list after the end: HTTP $ret_stat\n"; goto print_and_exit; }
+}
+// a) set result
+$test_cfg['subtests'][3] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
