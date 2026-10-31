@@ -7,7 +7,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-11";
 $test_descr = "Cryptography functionality";
-$test_subtest_cnt = 11;
+$test_subtest_cnt = 12;
 
 
 function t11_ossl($args) {                  // OpenSSL CLI (>= 3.5); returns true on exit code 0 - as t13_ossl (T-13)
@@ -41,6 +41,14 @@ function t11_p256_pem($point) {             // DEV-481 (B6): compressed P-256 po
   $alg = "\x30\x13" . hex2bin("06072a8648ce3d0201") . hex2bin("06082a8648ce3d030107");
   $der = "\x30" . chr(strlen($alg) + strlen($bit)) . $alg . $bit;
   return "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode($der), 64, "\n") . "-----END PUBLIC KEY-----\n";
+}
+
+function t11_xwing($ss_m, $ss_x, $ct_x, $pk_x) {   // DEV-482: X-Wing combiner SHA3-256(ss_M || ss_X || ct_X || pk_X || "\.//^\")
+  return hash('sha3-256', $ss_m . $ss_x . $ct_x . $pk_x . "\x5c\x2e\x2f\x2f\x5e\x5c", true);
+}
+
+function t11_mlkem768_der($pk) {            // DEV-482: raw ML-KEM-768 public key (1184 B) -> SubjectPublicKeyInfo DER (OID 2.16.840.1.101.3.4.4.2)
+  return hex2bin("308204b2300b0609608648016503040402038204a100") . $pk;
 }
 
 
@@ -1325,6 +1333,115 @@ foreach ($t11_created as $k) {                                // the keys of thi
   $ret_stat = http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/$k", $ret_val, $dummy_val, $token_keydel);
   if ( $ret_stat != 200 ) $test_cfg['subtests'][11] = 'ERROR';
 }
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 12       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST12:
+echo "  subtest-12\n";
+$test_cfg['subtests'][12] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// DEV-482: X-Wing (ML-KEM-768 + X25519) on two stored keys; host side OpenSSL CLI >= 3.5 (ML-KEM), sodium (X25519), SHA3-256
+$t12_keys = array();
+$token_keygen = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:gen");
+if ($token_keygen == false) goto print_and_exit;
+$token_keyimp = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:imp");
+if ($token_keyimp == false) goto print_and_exit;
+$token_keydel = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:del");
+if ($token_keydel == false) goto print_and_exit;
+$dir = sys_get_temp_dir() . "/t11_" . bin2hex(openssl_random_pseudo_bytes(4));
+@mkdir($dir);
+// a) keys made by HEM: host encaps -> HEM decaps, HEM encaps -> HEM decaps
+$pub = array();
+foreach (array("MLKEM768", "CURVE25519") as $type) {
+  $ret_val = false;
+  $post_data = json_encode(array('label' => "T-11.12 $type", 'type' => $type, 'descr' => base64_encode("CCTEST:T-11.12_$type"), 'return_pubkey' => true));
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_keygen);
+  if ( $ret_stat != 200 ) { echo "ERROR: create $type: HTTP $ret_stat\n"; goto t11_12_end; }
+  $t12_keys[] = $ret_val['kid'];
+  $pub[] = base64_decode($ret_val['pubkey']);
+}
+list($kid_m, $kid_x) = $t12_keys;
+$token = helper_authorize($cfg_domain, $cfg_passpharse, array("keymgmt:use:$kid_m", "keymgmt:use:$kid_x"));
+if ($token == false) goto t11_12_end;
+file_put_contents("$dir/pk.der", t11_mlkem768_der($pub[0]));
+if (!t11_ossl(array("pkeyutl", "-encap", "-pubin", "-keyform", "DER", "-inkey", "$dir/pk.der", "-out", "$dir/ct.bin", "-secret", "$dir/ss.bin"))) { echo "ERROR: openssl >= 3.5 needed\n"; goto t11_12_end; }
+$eph = random_bytes(32);
+$ct_x = sodium_crypto_scalarmult_base($eph);
+$ct = file_get_contents("$dir/ct.bin") . $ct_x;
+$ss = t11_xwing(file_get_contents("$dir/ss.bin"), sodium_crypto_scalarmult($eph, $pub[1]), $ct_x, $pub[1]);
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/xwing/decaps", $ret_val, json_encode(array('kid' => $kid_m, 'ext_kid' => $kid_x, 'ct' => base64_encode($ct))), $token);
+if ( ($ret_stat != 200) || (@$ret_val['alg'] !== "X-Wing") || (@$ret_val['ss'] !== base64_encode($ss)) ) { echo "ERROR: decaps of a host ct: HTTP $ret_stat\n"; goto t11_12_end; }
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/xwing/encaps", $ret_val, json_encode(array('kid' => $kid_m, 'ext_kid' => $kid_x)), $token);
+if ( ($ret_stat != 200) || (@$ret_val['alg'] !== "X-Wing") || (strlen(base64_decode(@$ret_val['ct'])) != 1120) ) { echo "ERROR: encaps: HTTP $ret_stat\n"; goto t11_12_end; }
+$ss = $ret_val['ss'];
+$ct = base64_decode($ret_val['ct']);
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/xwing/decaps", $ret_val, json_encode(array('kid' => $kid_m, 'ext_kid' => $kid_x, 'ct' => base64_encode($ct))), $token);
+if ( ($ret_stat != 200) || (@$ret_val['ss'] !== $ss) ) { echo "ERROR: decaps of a HEM ct: HTTP $ret_stat\n"; goto t11_12_end; }
+// b) bad input: ct 1119 B, kid / ext_kid swapped -> 400; one scope only -> 403; a changed ct_M or ct_X -> 200 with another ss
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/xwing/decaps", $ret_val, json_encode(array('kid' => $kid_m, 'ext_kid' => $kid_x, 'ct' => base64_encode(substr($ct, 0, 1119)))), $token);
+if ( $ret_stat != 400 ) { echo "ERROR: decaps of a 1119 B ct: HTTP $ret_stat (400 expected)\n"; goto t11_12_end; }
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/xwing/encaps", $ret_val, json_encode(array('kid' => $kid_x, 'ext_kid' => $kid_m)), $token);
+if ( $ret_stat != 400 ) { echo "ERROR: encaps with swapped keys: HTTP $ret_stat (400 expected)\n"; goto t11_12_end; }
+$token_one = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid_m");
+if ($token_one == false) goto t11_12_end;
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/xwing/encaps", $ret_val, json_encode(array('kid' => $kid_m, 'ext_kid' => $kid_x)), $token_one);
+if ( $ret_stat != 403 ) { echo "ERROR: encaps with one scope: HTTP $ret_stat (403 expected)\n"; goto t11_12_end; }
+foreach (array(100, 1100) as $pos) {                          // a byte of ct_M, a byte of ct_X
+  $bad = $ct;
+  $bad[$pos] = chr(ord($bad[$pos]) ^ 1);
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/xwing/decaps", $ret_val, json_encode(array('kid' => $kid_m, 'ext_kid' => $kid_x, 'ct' => base64_encode($bad))), $token);
+  if ( ($ret_stat != 200) || (strlen(base64_decode(@$ret_val['ss'])) != 32) || ($ret_val['ss'] === $ss) ) { echo "ERROR: decaps of a changed ct ($pos): HTTP $ret_stat\n"; goto t11_12_end; }
+}
+// c) keys made by the host and imported: HEM encaps -> host decaps; decaps on the imported keys -> 400
+if (!t11_ossl(array("genpkey", "-algorithm", "ML-KEM-768", "-out", "$dir/k.pem"))) goto t11_12_end;
+t11_ossl(array("pkey", "-in", "$dir/k.pem", "-pubout", "-outform", "DER", "-out", "$dir/k.der"));
+$xkp = sodium_crypto_box_keypair();
+$sk_x = sodium_crypto_box_secretkey($xkp);
+$pk_x = sodium_crypto_box_publickey($xkp);
+$imp = array();
+foreach (array(array("MLKEM768", substr(file_get_contents("$dir/k.der"), -1184)), array("CURVE25519", $pk_x)) as $k) {
+  $ret_val = false;
+  $post_data = json_encode(array('label' => "T-11.12 IMP " . $k[0], 'type' => $k[0], 'descr' => base64_encode("CCTEST:T-11.12_" . $k[0] . "_imported"), 'pubkey' => base64_encode($k[1])));
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/import", $ret_val, $post_data, $token_keyimp);
+  if ( $ret_stat != 200 ) { echo "ERROR: import " . $k[0] . ": HTTP $ret_stat\n"; goto t11_12_end; }
+  $t12_keys[] = $ret_val['kid'];
+  $imp[] = $ret_val['kid'];
+}
+$token = helper_authorize($cfg_domain, $cfg_passpharse, array("keymgmt:use:" . $imp[0], "keymgmt:use:" . $imp[1]));
+if ($token == false) goto t11_12_end;
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/xwing/encaps", $ret_val, json_encode(array('kid' => $imp[0], 'ext_kid' => $imp[1])), $token);
+if ( $ret_stat != 200 ) { echo "ERROR: encaps (imported keys): HTTP $ret_stat\n"; goto t11_12_end; }
+$ct = base64_decode($ret_val['ct']);
+file_put_contents("$dir/ct.bin", substr($ct, 0, 1088));
+if (!t11_ossl(array("pkeyutl", "-decap", "-inkey", "$dir/k.pem", "-in", "$dir/ct.bin", "-secret", "$dir/ss.bin"))) goto t11_12_end;
+$ct_x = substr($ct, 1088);
+if (base64_encode(t11_xwing(file_get_contents("$dir/ss.bin"), sodium_crypto_scalarmult($sk_x, $ct_x), $ct_x, $pk_x)) !== $ret_val['ss']) { echo "ERROR: host decaps ss differs\n"; goto t11_12_end; }
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/xwing/decaps", $ret_val, json_encode(array('kid' => $imp[0], 'ext_kid' => $imp[1], 'ct' => base64_encode($ct))), $token);
+if ( $ret_stat != 400 ) { echo "ERROR: decaps on public keys: HTTP $ret_stat (400 expected)\n"; goto t11_12_end; }
+// d) set result
+$test_cfg['subtests'][12] = 'OK';                             // mark this subtest as OK
+t11_12_end:
+foreach ($t12_keys as $k) {                                   // the keys of this subtest are removed
+  $ret_val = false;
+  $dummy_val = false;
+  $ret_stat = http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/$k", $ret_val, $dummy_val, $token_keydel);
+  if ( $ret_stat != 200 ) $test_cfg['subtests'][12] = 'ERROR';
+}
+array_map('unlink', glob("$dir/*"));
+@rmdir($dir);
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
