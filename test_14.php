@@ -6,7 +6,7 @@ include "config.php";
 
 // test name, descr & number of subtests
 $test_name = "T-14";
-$test_descr = "Key derivation interoperability (local reproduction of /api/keymgmt/derive)";
+$test_descr = "Key derivation interoperability";
 $test_subtest_cnt = 4;
 
 

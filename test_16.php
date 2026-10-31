@@ -6,7 +6,7 @@ include "config.php";
 
 // test name, descr & number of subtests
 $test_name = "T-16";
-$test_descr = "Device policy (DEV-447): set once at personalisation - policies off / on";
+$test_descr = "Device policy set at personalisation";
 $test_subtest_cnt = 3;
 
 

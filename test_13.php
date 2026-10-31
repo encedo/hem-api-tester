@@ -6,7 +6,7 @@ include "config.php";
 
 // test name, descr & number of subtests
 $test_name = "T-13";
-$test_descr = "Attestation (POST /api/system/config/attestation): JWT, key block, proof of possession";
+$test_descr = "Attestation: JWT, key block, proof of possession";
 $test_subtest_cnt = 6;
 
 

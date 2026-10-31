@@ -19,13 +19,15 @@ Using
    
    `sudo apt upgrade`
    
-   `sudo apt install git php-cli`
+   `sudo apt install git php-cli php-bcmath`
 
 4. Clone this repository.
 
    `git clone https://github.com/encedo/hem-api-tester.git`
    
    `cd hem-api-tester`
+
+   Branches: `fw-1.3.x` - tests for FW 1.3.x; `main` - tests for FW 1.2.x (also tagged `fw-1.2.x`). For FW 1.3.x: `git checkout fw-1.3.x`.
 
 5. Run first test - e.g. to test Encedo PPA.
 
@@ -36,6 +38,10 @@ Cheers :)
 
 
 P.S. Edit config.php with `$cfg_authkey` and `$cfg_epa_domain`.
+
+What every test checks, the typical order of the runs and the preconditions are in `test_description.md`.
+
+T-11 (ML-DSA, ML-KEM, X-Wing subtests) and T-13 need the OpenSSL CLI 3.5 or newer (Ubuntu 22.04 has 3.0): put it on PATH or set `ENCEDO_OPENSSL` to its path.
 
 
 External authenticator simulator
@@ -69,5 +75,10 @@ The protocol functions are in `libs/extauth.php`; test_15 uses them too.
 Input validation test (T-15)
 ============================
 
-`php test_15.php` sends malformed input (body longer than Content-Length, KIDs of a wrong length, misplaced base64 padding, auth JWTs with missing or shortened claims, short AES-CBC messages, a TLS key that cannot be decrypted, malformed ExtAuth replies) and checks the error code from the API docs (400/401/406/411) and that the device is still running without a restart after every subtest. It needs an initialised device (run test_2 first), no DIAG endpoints and no user interaction.
+`php test_15.php` sends malformed input (body longer than Content-Length, KIDs of a wrong length, misplaced base64 padding, auth JWTs with missing or shortened claims, short AES-CBC messages, a TLS key that cannot be decrypted, malformed ExtAuth replies) and checks the error code from the API docs (400/401/406/411) and that the device is still running without a restart after every subtest. It also checks multi-scope tokens (DEV-436). It needs an initialised device (run test_2 first), no DIAG endpoints and no user interaction. The last subtest (15.14) is a factory default: the TOE ends not initialised, run test_2 (and test_10 before test_11) again.
 
+
+Device policy test (T-16)
+=========================
+
+`php test_16.php` checks the device policy (DEV-447: `raw_ecdh_enabled`, `pubkey_in_search`, `pubkey_in_list`), which is set only at personalisation. It runs `wipeout.php` and `test_2.php` three times (policy `[]`, `["pubkey_in_list"]` with a reboot, then a plain T-2 with all three on) and checks raw ECDH, public keys in search / list and that `POST /api/system/config` refuses `policy`. It is destructive and takes several minutes; it ends with the device personalised as the other tests expect, but without the T-10 keys (run test_10 before test_11). T-2 takes the policy from the `ENCEDO_T2_POLICY` environment variable (a JSON array); without it all three are on.
