@@ -7,7 +7,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-13";
 $test_descr = "Attestation: JWT, key block, proof of possession";
-$test_subtest_cnt = 6;
+$test_subtest_cnt = 7;
 
 
 // initialize the execution env
@@ -78,6 +78,22 @@ function t13_tmp($content) {
   $f = tempnam(sys_get_temp_dir(), "t13");
   file_put_contents($f, $content);
   return $f;
+}
+
+function t13_csr_ok($csr_b64, &$err) {      // DEV-485: CSR (base64 DER) is PKCS#10 v1 (version 0) and its self-signature verifies in OpenSSL; returns the DER or false
+  $der = base64_decode($csr_b64, true);
+  $o = 0;
+  foreach (array(0, 1) as $lvl) {           // outer SEQUENCE, then the CertificationRequestInfo SEQUENCE
+    if ( ($der === false) || (strlen($der) < $o + 2) || ($der[$o] !== "\x30") ) { $err = "not a DER SEQUENCE"; return false; }
+    $l = ord($der[$o + 1]);
+    $o += 2 + (($l & 0x80) ? ($l & 0x7f) : 0);
+  }
+  if ( substr($der, $o, 3) !== "\x02\x01\x00" ) { $err = "version is not 0 (PKCS#10 v1)"; return false; }
+  $f = t13_tmp($der);
+  $ok = t13_ossl(array("req", "-inform", "DER", "-in", $f, "-noout", "-verify"));
+  unlink($f);
+  if ( !$ok ) { $err = "OpenSSL req -verify failed"; return false; }
+  return $der;
 }
 
 function t13_request($domain, $token, $req, &$jwt) {   // POST attestation; returns HTTP status, $jwt = token on 200
@@ -542,6 +558,46 @@ foreach (array("31 B" => rtrim(strtr(base64_encode(openssl_random_pseudo_bytes(3
 }
 // d) set result
 $test_cfg['subtests'][6] = 'OK';                            // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 7        ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST7:
+echo "  subtest-7\n";
+$test_cfg['subtests'][7] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
+// DEV-485: CSRs - the TLS key CSR (POST /api/system/config gen_csr, as at init) and, in a DIAG build (or on a fresh chip), the ATECC CSR of
+//   GET /api/system/config/attestation: PKCS#10 version 0, the self-signature verifies in OpenSSL; ATECC CSR: SAN otherName = SHA-1(04||X||Y)
+//   of the attestation key, CSR key = certificate key
+$token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
+if ($token == false) goto print_and_exit;
+$not_used = false;
+// a) TLS key CSR
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, json_encode(array('gen_csr' => true)), $token);
+if ( ($ret_stat != 200) || !isset($ret_val['csr']) ) { echo "ERROR: config gen_csr: HTTP $ret_stat, no csr\n"; goto print_and_exit; }
+if ( t13_csr_ok($ret_val['csr'], $err) === false ) { echo "ERROR: gen_csr CSR: $err\n"; goto print_and_exit; }
+// b) ATECC CSR - only when the device returns it (DIAG build / fresh chip); a release build with a certificate returns crt only
+$ret_val = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config/attestation", $ret_val, $not_used, $token);
+if ( $ret_stat != 200 ) { echo "ERROR: GET attestation: HTTP $ret_stat\n"; goto print_and_exit; }
+if ( isset($ret_val['csr']) ) {
+  $der = t13_csr_ok($ret_val['csr'], $err);
+  if ( $der === false ) { echo "ERROR: ATECC CSR: $err\n"; goto print_and_exit; }
+  if ( !isset($ret_val['key']) || (strpos($der, "\x04\x14" . sha1(substr(base64_decode($ret_val['key']), -65), true)) === false) ) { echo "ERROR: ATECC CSR: SAN otherName is not SHA-1 of the attestation key\n"; goto print_and_exit; }
+  if ( isset($ret_val['crt']) ) {
+    $crt_key = openssl_pkey_get_details(openssl_pkey_get_public("-----BEGIN CERTIFICATE-----\n" . chunk_split($ret_val['crt'], 64, "\n") . "-----END CERTIFICATE-----\n"));
+    $csr_key = openssl_pkey_get_details(openssl_csr_get_public_key("-----BEGIN CERTIFICATE REQUEST-----\n" . chunk_split($ret_val['csr'], 64, "\n") . "-----END CERTIFICATE REQUEST-----\n"));
+    if ( ($crt_key === false) || ($csr_key === false) || ($crt_key['key'] !== $csr_key['key']) ) { echo "ERROR: ATECC CSR key differs from the certificate key\n"; goto print_and_exit; }
+  }
+  echo "    ATECC CSR checked\n";
+} else {
+  echo "    no ATECC CSR in the attestation reply (release build with a certificate) - not checked\n";
+}
+// c) set result
+$test_cfg['subtests'][7] = 'OK';                            // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
