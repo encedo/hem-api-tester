@@ -51,6 +51,11 @@ function t11_mlkem768_der($pk) {            // DEV-482: raw ML-KEM-768 public ke
   return hex2bin("308204b2300b0609608648016503040402038204a100") . $pk;
 }
 
+function t11_ecdsa_local_ok($sign_b64, $msg, $algo, $pub_pem, $sig_len) {   // DEV-484: HEM ECDSA signature is r || s of the expected length and verifies in OpenSSL
+  $sig = base64_decode($sign_b64);
+  return (strlen($sig) == $sig_len) && (openssl_verify($msg, ecdsa_rs2der($sig), $pub_pem, $algo) === 1);
+}
+
 
 // initialize the execution env
 init_env();
@@ -203,6 +208,15 @@ do {
 } while (true);
 $keys_to_test = $keychain;
 $msg_raw = base64_encode( openssl_random_pseudo_bytes( 32 ) );    // random
+// DEV-484: local OpenSSL cross-check of every ECDSA signature: SubjectPublicKeyInfo DER prefix of a compressed SEC1 point, coordinate size
+$t11_ec = array(
+  "SECP256R1" => array("3039301306072a8648ce3d020106082a8648ce3d030107032200", 32),
+  "SECP384R1" => array("3046301006072a8648ce3d020106052b81040022033200", 48),
+  "SECP521R1" => array("3058301006072a8648ce3d020106052b81040023034400", 66),
+  "SECP256K1" => array("3036301006072a8648ce3d020106052b8104000a032200", 32),
+);
+$token_keyget = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:get");
+if ($token_keyget == false) goto print_and_exit;
 // f) iterate over found keys to call ExDSA sign & verify
 $counter = 0;
 foreach($keys_to_test as $item) {
@@ -294,6 +308,12 @@ foreach($keys_to_test as $item) {
     if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
     $counter++;
   } else {
+    // DEV-484: public key of the key pair for the local check
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/$kid", $ret_val, $dummy_val, $token_keyget);
+    if ( ($ret_stat != 200) || !isset($ret_val['pubkey']) || !isset($t11_ec[$type]) ) { echo "ERROR: keymgmt/get $type: HTTP $ret_stat\n"; goto print_and_exit; }
+    $pub_pem = "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode(hex2bin($t11_ec[$type][0]) . base64_decode($ret_val['pubkey'])), 64, "\n") . "-----END PUBLIC KEY-----\n";
+    $sig_len = 2 * $t11_ec[$type][1];
     //SHA256WithECDSA  - ECDSA
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "SHA256WithECDSA");
     $post_data = json_encode( $oper_arg );
@@ -307,6 +327,7 @@ foreach($keys_to_test as $item) {
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
+    if ( !t11_ecdsa_local_ok($oper_arg['sign'], base64_decode($msg_raw), OPENSSL_ALGO_SHA256, $pub_pem, $sig_len) ) { echo "ERROR: SHA256WithECDSA ($type): not r || s or no local OpenSSL verify\n"; goto print_and_exit; }   // DEV-484
     //SHA384WithECDSA  - ECDSA
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "SHA384WithECDSA");
     $post_data = json_encode( $oper_arg );
@@ -320,6 +341,7 @@ foreach($keys_to_test as $item) {
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
+    if ( !t11_ecdsa_local_ok($oper_arg['sign'], base64_decode($msg_raw), OPENSSL_ALGO_SHA384, $pub_pem, $sig_len) ) { echo "ERROR: SHA384WithECDSA ($type): not r || s or no local OpenSSL verify\n"; goto print_and_exit; }   // DEV-484
     //SHA512WithECDSA  - ECDSA
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "SHA512WithECDSA");
     $post_data = json_encode( $oper_arg );
@@ -333,6 +355,7 @@ foreach($keys_to_test as $item) {
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( $cfg_debug ) var_dump( $ret_val );
     if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;        // expected is 200 - ExDSA signature verified
+    if ( !t11_ecdsa_local_ok($oper_arg['sign'], base64_decode($msg_raw), OPENSSL_ALGO_SHA512, $pub_pem, $sig_len) ) { echo "ERROR: SHA512WithECDSA ($type): not r || s or no local OpenSSL verify\n"; goto print_and_exit; }   // DEV-484
     // DEV-481 (A6): det:true - RFC 6979, the same signature twice and still valid; det not a bool -> 400
     $oper_arg = array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "SHA256WithECDSA", 'det' => true);
     $post_data = json_encode( $oper_arg );
@@ -349,6 +372,7 @@ foreach($keys_to_test as $item) {
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) goto print_and_exit;
+    if ( !t11_ecdsa_local_ok($sign_det, base64_decode($msg_raw), OPENSSL_ALGO_SHA256, $pub_pem, $sig_len) ) { echo "ERROR: det:true SHA256WithECDSA ($type): not r || s or no local OpenSSL verify\n"; goto print_and_exit; }   // DEV-484
     $post_data = json_encode( array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "SHA256WithECDSA", 'det' => "yes") );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);
@@ -358,10 +382,12 @@ foreach($keys_to_test as $item) {
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);
     if ( $ret_stat != 200 ) goto print_and_exit;
-    $post_data = json_encode( array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "SHA256WithECDSA", 'sign' => $ret_val['sign']) );
+    $sign_ph = $ret_val['sign'];
+    $post_data = json_encode( array('kid' => $kid, 'msg' => $msg_raw, 'alg' => "SHA256WithECDSA", 'sign' => $sign_ph) );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/verify", $ret_val, $post_data, $token);
     if ( ($ret_stat != 200) || (@$ret_val['verified'] !== true) ) { echo "ERROR: ECDSA prehash signature does not verify as SHA256WithECDSA ($type)\n"; goto print_and_exit; }
+    if ( !t11_ecdsa_local_ok($sign_ph, base64_decode($msg_raw), OPENSSL_ALGO_SHA256, $pub_pem, $sig_len) ) { echo "ERROR: ECDSA prehash ($type): not r || s or no local OpenSSL verify\n"; goto print_and_exit; }   // DEV-484
     $post_data = json_encode( array('kid' => $kid, 'msg' => base64_encode(openssl_random_pseudo_bytes(19)), 'alg' => "ECDSA") );
     $ret_val = false;
     $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/exdsa/sign", $ret_val, $post_data, $token);

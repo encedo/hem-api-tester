@@ -364,6 +364,18 @@ function base64url_decode($data) {
 }
 
 
+// DEV-484: ECDSA signature raw r || s -> ASN.1 DER (openssl_verify accepts DER only)
+function ecdsa_rs2der($rs) {
+  $der = '';
+  foreach (str_split($rs, strlen($rs) / 2) as $int) {   // r, then s
+    $int = ltrim($int, "\0");                           // DER INTEGER: no leading zero bytes,
+    if ( ($int === '') || (ord($int[0]) >= 0x80) ) $int = "\0" . $int;   // but 0x00 in front when the top bit is set
+    $der .= "\x02" . chr(strlen($int)) . $int;          // INTEGER
+  }
+  return "\x30" . ((strlen($der) > 0x7f) ? "\x81" : "") . chr(strlen($der)) . $der;   // SEQUENCE { r, s }; P-521 needs the long length form
+}
+
+
 function encedo_log_integrity_check($pubkey, $log_array, &$output_log){
 
   $output_log = "";

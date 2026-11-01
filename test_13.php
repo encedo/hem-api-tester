@@ -60,16 +60,6 @@ function t13_pem_pub($type, $raw) {         // raw public key (NIST: SEC1 point)
   return "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode($der), 64, "\n") . "-----END PUBLIC KEY-----\n";
 }
 
-function t13_rs2der($raw) {                 // ECDSA raw r||s -> DER
-  $out = '';
-  foreach (str_split($raw, intdiv(strlen($raw), 2)) as $i) {
-    $i = ltrim($i, "\0");
-    if (($i === '') || (ord($i[0]) & 0x80)) $i = "\0" . $i;
-    $out .= t13_der(0x02, $i);
-  }
-  return t13_der(0x30, $out);
-}
-
 function t13_b64url_dec($s) {
   return base64_decode(strtr($s, '-_', '+/') . str_repeat('=', (4 - strlen($s) % 4) % 4));
 }
@@ -112,7 +102,7 @@ function t13_check_jwt($jwt, $aud, $nonce_b64) {
   if ( (@$jwk['kty'] !== "EC") || (@$jwk['crv'] !== "P-256") || (strlen($x) != 32) || (strlen($y) != 32) ) return "header jwk " . json_encode($jwk);
   $point = "\x04" . $x . $y;
   if ( strtolower(@$hdr['kid']) !== sha1($point) ) return "header kid is not SHA-1(04||x||y) of jwk";
-  if ( (strlen($sig) != 64) || (openssl_verify($p[0] . "." . $p[1], t13_rs2der($sig), t13_pem_pub("SECP256R1", $point), OPENSSL_ALGO_SHA256) !== 1) ) return "JWT signature (ES256) does not verify";
+  if ( (strlen($sig) != 64) || (openssl_verify($p[0] . "." . $p[1], ecdsa_rs2der($sig), t13_pem_pub("SECP256R1", $point), OPENSSL_ALGO_SHA256) !== 1) ) return "JWT signature (ES256) does not verify";
   if ( (@$body['aud'] !== $aud) || (@$body['nonce'] !== $nonce_b64) ) return "aud/nonce differ from the request";
   if ( !isset($body['iat'], $body['exp']) || ($body['exp'] <= $body['iat']) ) return "iat/exp";
   if ( !preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/', @$body['jti']) ) return "jti is not UUID v4";
@@ -187,7 +177,7 @@ function t13_create_any($domain, $token, $type, $mode, $label) {   // any key ty
 
 function t13_sig_ok($type, $pub, $msg, $sig) {   // local verification of a signature PoP
   global $t13_ec;
-  if ( isset($t13_ec[$type]) ) return (strlen($sig) == 2 * $t13_ec[$type][1]) && (openssl_verify($msg, t13_rs2der($sig), t13_pem_pub($type, $pub), $t13_ec[$type][2]) === 1);
+  if ( isset($t13_ec[$type]) ) return (strlen($sig) == 2 * $t13_ec[$type][1]) && (openssl_verify($msg, ecdsa_rs2der($sig), t13_pem_pub($type, $pub), $t13_ec[$type][2]) === 1);
   if ( $type == "ED25519" ) return sodium_crypto_sign_verify_detached($sig, $msg, $pub);
   return t13_ossl(array("pkeyutl", "-verify", "-pubin", "-inkey", t13_tmp(t13_pem_pub($type, $pub)), "-rawin", "-in", t13_tmp($msg), "-sigfile", t13_tmp($sig)));   // ED448, ML-DSA
 }
@@ -507,7 +497,7 @@ echo "  subtest-6\n";
 $test_cfg['subtests'][6] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
 // DEV-474: GET /api/system/config/attestation[/<nonce_base64url>] - genuine token bound to the caller's nonce:
 //   without the segment: <SKID>.<TS>.<SIG> (SIG over SHA-256 of the decimal TS text) - unchanged
-//   with it: <nonce>.<SKID>.<TS>.<SIG>, SIG = ECDSA P-256 (DER, base64) over SHA-256("<nonce>.<SKID>.<TS>"), device key of the certificate
+//   with it: <nonce>.<SKID>.<TS>.<SIG>, SIG = ECDSA P-256 (r || s 64 B, base64 - DEV-484, was DER) over SHA-256("<nonce>.<SKID>.<TS>"), device key of the certificate
 $token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");
 if ($token == false) goto print_and_exit;
 $not_used = false;
@@ -521,8 +511,9 @@ if ($dev_pub === false) { echo "ERROR: device certificate does not parse\n"; got
 $ec = openssl_pkey_get_details($dev_pub)['ec'];
 $skid = base64_encode(sha1("\x04" . str_pad($ec['x'], 32, "\0", STR_PAD_LEFT) . str_pad($ec['y'], 32, "\0", STR_PAD_LEFT), true));
 $p = explode('.', $ret_val['genuine']);
-if ( (count($p) != 3) || ($p[0] !== $skid) ) { echo "ERROR: genuine without nonce: " . $ret_val['genuine'] . "\n"; goto print_and_exit; }
-if ( openssl_verify(base64_decode($p[1]), base64_decode($p[2]), $dev_pub, OPENSSL_ALGO_SHA256) !== 1 ) { echo "ERROR: genuine without nonce: signature over the TS does not verify\n"; goto print_and_exit; }
+if ( (count($p) != 3) || ($p[0] !== $skid) || (strlen(base64_decode($p[2], true)) != 64) ) { echo "ERROR: genuine without nonce: " . $ret_val['genuine'] . "\n"; goto print_and_exit; }   // DEV-484: SIG r || s 64 B
+$sig = ecdsa_rs2der(base64_decode($p[2]));   // DEV-484: SIG r || s -> DER
+if ( openssl_verify(base64_decode($p[1]), $sig, $dev_pub, OPENSSL_ALGO_SHA256) !== 1 ) { echo "ERROR: genuine without nonce: signature over the TS does not verify\n"; goto print_and_exit; }
 // b) with a nonce (32 and 64 B): four parts, nonce first, signature over "<nonce>.<SKID>.<TS>"
 foreach (array(32, 64) as $nlen) {
   $nonce = rtrim(strtr(base64_encode(openssl_random_pseudo_bytes($nlen)), '+/', '-_'), '=');
@@ -530,11 +521,12 @@ foreach (array(32, 64) as $nlen) {
   $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config/attestation/$nonce", $ret_val, $not_used, $token);
   if ( ($ret_stat != 200) || !isset($ret_val['genuine']) ) { echo "ERROR: GET attestation/<nonce $nlen B>: HTTP $ret_stat\n"; goto print_and_exit; }
   $p = explode('.', $ret_val['genuine']);
-  if ( (count($p) != 4) || ($p[0] !== $nonce) || ($p[1] !== $skid) ) { echo "ERROR: genuine with nonce: " . $ret_val['genuine'] . "\n"; goto print_and_exit; }
+  if ( (count($p) != 4) || ($p[0] !== $nonce) || ($p[1] !== $skid) || (strlen(base64_decode($p[3], true)) != 64) ) { echo "ERROR: genuine with nonce: " . $ret_val['genuine'] . "\n"; goto print_and_exit; }
   if ( intval(base64_decode($p[2])) < time() - 600 ) { echo "ERROR: genuine with nonce: TS " . base64_decode($p[2]) . "\n"; goto print_and_exit; }
-  if ( openssl_verify($p[0] . "." . $p[1] . "." . $p[2], base64_decode($p[3]), $dev_pub, OPENSSL_ALGO_SHA256) !== 1 ) { echo "ERROR: genuine with nonce ($nlen B): signature does not verify\n"; goto print_and_exit; }
+  $sig = ecdsa_rs2der(base64_decode($p[3]));   // DEV-484: SIG r || s -> DER
+  if ( openssl_verify($p[0] . "." . $p[1] . "." . $p[2], $sig, $dev_pub, OPENSSL_ALGO_SHA256) !== 1 ) { echo "ERROR: genuine with nonce ($nlen B): signature does not verify\n"; goto print_and_exit; }
   // the signature binds the nonce: another nonce with the same SKID / TS / SIG does not verify
-  if ( openssl_verify(strrev($p[0]) . "." . $p[1] . "." . $p[2], base64_decode($p[3]), $dev_pub, OPENSSL_ALGO_SHA256) === 1 ) { echo "ERROR: genuine signature does not bind the nonce\n"; goto print_and_exit; }
+  if ( openssl_verify(strrev($p[0]) . "." . $p[1] . "." . $p[2], $sig, $dev_pub, OPENSSL_ALGO_SHA256) === 1 ) { echo "ERROR: genuine signature does not bind the nonce\n"; goto print_and_exit; }
 }
 // c) bad nonce -> 400: 31 / 65 B, padding, standard alphabet, not base64
 $n32 = openssl_random_pseudo_bytes(32);
