@@ -419,6 +419,49 @@ function encedo_log_integrity_check($pubkey, $log_array, &$output_log){
 }
 
 
+// DEV-500: audit log v2 - every line signed with a per-file Ed25519 key, the key certified by the device log key (GET /api/logger/key)
+// $report: version (1|2), lines, headers, rotations, lost, gaps[] ("prev->seq"), errors[]; v1 files go through encedo_log_integrity_check()
+function encedo_log_verify($pubkey_dev, $log_array, &$report) {
+  $report = array('version' => 0, 'lines' => 0, 'headers' => 0, 'rotations' => 0, 'lost' => 0, 'gaps' => array(), 'errors' => array());
+  $pub = false;          // current per-file public key
+  $rotate_pub = false;   // pub announced by the last LOGGER_KEY_ROTATE line
+  $prev_seq = null;
+  foreach ($log_array as $n => $line) {
+    if (($line === '') || ($line[0] === '#')) continue;
+    $f = explode('|', $line);
+    if (count($f) != 7) { $report['errors'][] = "line $n: " . count($f) . " fields"; return false; }
+    if ($report['version'] == 0) {                                     // the first line decides: v2 header or v1 key line
+      $report['version'] = (($f[2] === '0') && ($f[3] === '0') && ($f[4] === 'v2')) ? 2 : 1;
+      if ($report['version'] == 1) {                                   // v1: the old check wants the 7-field lines only (no '#' comment, no empty line)
+        $v1 = array();
+        foreach ($log_array as $l) if (count(explode('|', $l)) == 7) { $v1[] = $l; $report['lines']++; }
+        $out = '';
+        return encedo_log_integrity_check($pubkey_dev, $v1, $out);
+      }
+    }
+    $text = substr($line, 0, strrpos($line, '|') + 1);
+    $sig = base64url_decode($f[6]);
+    $seq = hexdec($f[0]);
+    if (($prev_seq !== null) && ($seq != $prev_seq + 1)) $report['gaps'][] = dechex($prev_seq) . "->" . $f[0];
+    $prev_seq = $seq;
+    if (($f[2] === '0') && ($f[3] === '0') && ($f[4] === 'v2')) {     // header: data = pub_file (32) || Ed25519_dev(pub_file) (64)
+      $cert = base64url_decode($f[5]);
+      if (strlen($cert) != 96) { $report['errors'][] = "line $n: header data is not 96 B"; return false; }
+      $newpub = substr($cert, 0, 32);
+      if (!sodium_crypto_sign_verify_detached(substr($cert, 32), $newpub, $pubkey_dev)) { $report['errors'][] = "line $n: header key not certified by the device key"; return false; }
+      if (($report['headers'] > 0) && ($rotate_pub !== $newpub)) { $report['errors'][] = "line $n: header without a LOGGER_KEY_ROTATE line for its key"; return false; }
+      $pub = $newpub; $rotate_pub = false; $report['headers']++;
+    }
+    if ($pub === false) { $report['errors'][] = "line $n: line before the header"; return false; }
+    if ((strlen($sig) != 64) || !sodium_crypto_sign_verify_detached($sig, $text, $pub)) { $report['errors'][] = "line $n: signature does not verify"; return false; }
+    if ($f[2] === '32') { $rotate_pub = base64url_decode($f[5]); $report['rotations']++; }       // LOGGER_KEY_ROTATE 0x32
+    if ($f[2] === '33') { $report['lost'] += unpack('V', base64url_decode($f[5]))[1]; }          // LOGGER_EVENTS_LOST 0x33
+    $report['lines']++;
+  }
+  return ($report['version'] == 2) && ($report['lines'] > 0);
+}
+
+
 
 // raw HTTP over TLS - the request is sent exactly as given (header name case, Content-Length value),
 // for checks http_transaction() cannot do: lowercase header names (DEV-430), keep-alive (two requests on

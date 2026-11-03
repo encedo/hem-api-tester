@@ -190,11 +190,20 @@ $sig = base64_decode($ret_val['nonce_signed']);
 $pubkey = base64_decode($ret_val['key']);
 $ret = sodium_crypto_sign_verify_detached( $sig, $msg, $pubkey);
 if ($ret == false) goto print_and_exit;                   // ups - wtf?
-// d) validate log entries
-$output = '';
-$ret = encedo_log_integrity_check($pubkey, $log, $output);
-if ($ret != true) goto print_and_exit;                    // log NOT validated, expected was TRUE
-// e) set result
+// d) validate log entries - DEV-500: format v2 required (per-file key certified by the device key, every line signed); a v1 log is reported and fails
+$report = array();
+$ret = encedo_log_verify($pubkey, $log, $report);
+echo "    log format v" . $report['version'] . ", " . $report['lines'] . " lines, " . $report['headers'] . " header(s), " . $report['rotations'] . " rotation(s), " . $report['lost'] . " lost" . (count($report['gaps']) ? ", seq gaps: " . implode(" ", $report['gaps']) : "") . "\n";
+foreach ($report['errors'] as $e) echo "    $e\n";
+if ( ($ret != true) || ($report['version'] != 2) || count($report['gaps']) ) goto print_and_exit;
+// e) tampering is detected: a changed ts in one line (signature), a removed line (seq gap)
+$i = intdiv(count($log), 2);
+$bad = $log; $f = explode('|', $bad[$i]); $f[1] = dechex(hexdec($f[1]) + 1); $bad[$i] = implode('|', $f);
+if ( encedo_log_verify($pubkey, $bad, $r) ) { echo "ERROR: a modified line verified\n"; goto print_and_exit; }
+$bad = $log; array_splice($bad, $i, 1);
+encedo_log_verify($pubkey, $bad, $r);
+if ( count($r['gaps']) != 1 ) { echo "ERROR: a removed line left no seq gap\n"; goto print_and_exit; }
+// f) set result
 $test_cfg['subtests'][2] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
