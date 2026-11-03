@@ -1237,7 +1237,7 @@ $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mlds
 if ( ($ret_stat != 200) || (@$ret_val['verified'] !== false) ) { echo "ERROR: verify of a bad signature: HTTP $ret_stat\n"; goto t11_10_end; }
 $ret_val = false;
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/pqc/mldsa/sign", $ret_val, json_encode(array('kid' => $kid, 'msg' => base64_encode($msg))), $token);
-if ( $ret_stat != 406 ) { echo "ERROR: sign on a public key: HTTP $ret_stat (406 expected)\n"; goto t11_10_end; }
+if ( $ret_stat != 400 ) { echo "ERROR: sign on a public key: HTTP $ret_stat (400 expected)\n"; goto t11_10_end; }   // DEV-499 (B8 / D1): wrong key type is 400 as in exdsa/sign (was 406 for every mldsa/sign error)
 // b) ML-KEM-768: public key imported, HEM encaps, host decaps, the same shared secret
 if (!t11_ossl(array("genpkey", "-algorithm", "ML-KEM-768", "-out", "$dir/k.pem"))) goto t11_10_end;
 t11_ossl(array("pkey", "-in", "$dir/k.pem", "-pubout", "-outform", "DER", "-out", "$dir/k.der"));
