@@ -134,11 +134,19 @@ if ( $test_cfg['conf'] == "ENCEDO PPA" ) {
 foreach ($bad_cfgs as $bad) {
   $bad_val = $init_val;
   $bad_val['cfg'] = array_merge($init_val['cfg'], $bad);
-  $post_data = json_encode( array('init' => ejwt_generate($bad_val, $admin_secret, $ext_pubkey)) );
+  // DEV-499 (D1): the challenge jti is accepted once (A4) - a fresh GET /api/auth/init for every attempt (was: the same jti in six requests)
+  $ret_val = false;
+  if ( http_transaction("http", "GET", $cfg_domain, "/api/auth/init", $ret_val) != 200 ) goto print_and_exit;
+  $bad_val['jti'] = $ret_val['jti']; $bad_val['aud'] = $ret_val['spk']; $bad_val['exp'] = $ret_val['exp'];
+  $post_data = json_encode( array('init' => ejwt_generate($bad_val, $admin_secret, base64_decode($ret_val['spk']))) );
   $ret_val = false;
   $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/auth/init", $ret_val, $post_data);
   if ( $ret_stat != 400 ) { echo "    init with " . json_encode($bad) . ": HTTP $ret_stat, expected 400\n"; goto print_and_exit; }
 }
+$ret_val = false;                                           // DEV-499 (D1): fresh challenge for the real initialisation too
+if ( http_transaction("http", "GET", $cfg_domain, "/api/auth/init", $ret_val) != 200 ) goto print_and_exit;
+$init_val['jti'] = $ret_val['jti']; $init_val['aud'] = $ret_val['spk']; $init_val['exp'] = $ret_val['exp'];
+$ext_pubkey = base64_decode($ret_val['spk']);
 $init_data = ejwt_generate($init_val, $admin_secret, $ext_pubkey);
 // g) post initialization data by calling TOE/HEM API
 $post_data = json_encode( array('init' => $init_data) );
