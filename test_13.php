@@ -389,7 +389,9 @@ foreach ($imported as $from => $k) {
   $token = t13_key_token($cfg_domain, $cfg_passpharse, $k[0]);
   $nonce = base64_encode(openssl_random_pseudo_bytes(32));
   if ( ($ret_stat = t13_request($cfg_domain, $token, array('nonce' => $nonce, 'aud' => $aud, 'kid' => $k[0]), $jwt)) != 200 ) { echo "ERROR: import attestation $from: HTTP $ret_stat\n"; goto print_and_exit; }
-  $key = @t13_check_jwt($jwt, $aud, $nonce)['key'];
+  $body = t13_check_jwt($jwt, $aud, $nonce);   // DEV-499 (D2): an error string indexed with ['key'] was a TypeError on PHP 8 / silently "J" on PHP 7
+  if ( !is_array($body) ) { echo "ERROR: import attestation $from: $body\n"; goto print_and_exit; }
+  $key = @$body['key'];
   if ( (@$key['type'] !== $k[2]) || (base64_decode(@$key['pubkey']['primary']) !== $k[1]) || (@$key['properties']['privatekey'] !== false) || (@$key['properties']['derived'] !== true) ) { echo "ERROR: import key block $from: " . json_encode($key) . "\n"; goto print_and_exit; }
 }
 // d) symmetric keys: type, modes HMAC / AES, derived false, no pubkey / privatekey
@@ -397,7 +399,9 @@ foreach ($sym as $type => $k) {
   $token = t13_key_token($cfg_domain, $cfg_passpharse, $k[0]);
   $nonce = base64_encode(openssl_random_pseudo_bytes(32));
   if ( ($ret_stat = t13_request($cfg_domain, $token, array('nonce' => $nonce, 'aud' => $aud, 'kid' => $k[0]), $jwt)) != 200 ) { echo "ERROR: symmetric attestation $type: HTTP $ret_stat\n"; goto print_and_exit; }
-  $key = @t13_check_jwt($jwt, $aud, $nonce)['key'];
+  $body = t13_check_jwt($jwt, $aud, $nonce);   // DEV-499 (D2)
+  if ( !is_array($body) ) { echo "ERROR: symmetric attestation $type: $body\n"; goto print_and_exit; }
+  $key = @$body['key'];
   if ( (strtolower(@$key['kid']) !== $k[0]) || (@$key['type'] !== $type) || (@$key['modes'] !== array($t13_symmetric[$type])) || isset($key['pubkey']) || isset($key['properties']['privatekey']) || (@$key['properties']['derived'] !== false) ) { echo "ERROR: symmetric key block $type: " . json_encode($key) . "\n"; goto print_and_exit; }
 }
 // e) label / descr only with include_metadata (asymmetric and symmetric)
@@ -408,7 +412,9 @@ foreach (array("ED25519" => $keys["ED25519"][0], "AES256" => $sym["AES256"][0]) 
     $req = array('nonce' => $nonce, 'aud' => $aud, 'kid' => $kid);
     if ($meta) $req['include_metadata'] = true;
     if ( t13_request($cfg_domain, $token, $req, $jwt) != 200 ) goto print_and_exit;
-    $key = @t13_check_jwt($jwt, $aud, $nonce)['key'];
+    $body = t13_check_jwt($jwt, $aud, $nonce);   // DEV-499 (D2)
+    if ( !is_array($body) ) { echo "ERROR: $name attestation (include_metadata " . json_encode($meta) . "): $body\n"; goto print_and_exit; }
+    $key = @$body['key'];
     if ( $meta != (isset($key['label']) && isset($key['descr'])) ) { echo "ERROR: $name label/descr with include_metadata " . json_encode($meta) . "\n"; goto print_and_exit; }
     if ( $meta && (($key['label'] !== "T-13 $name $run") || (base64_decode($key['descr']) !== "CCTEST:T-13 $name $run")) ) { echo "ERROR: $name label/descr values\n"; goto print_and_exit; }
   }

@@ -829,7 +829,7 @@ foreach($keychain as $item) {
   $msg = base64_encode( openssl_random_pseudo_bytes( 100 ) ); //CBC can handle any message size - padding
   $ctx = base64_encode( openssl_random_pseudo_bytes( 8 ) );
   $alg = "AES128-CBC";
-  $post_array = array('kid' => $kid, 'pubkey' => $pubkey, 'msg' => $msg, 'alg' => $alg, 'ctx' => $ctx);
+  $post_array = array('kid' => $kid, 'pubkey' => $pubkey, 'msg' => $msg, 'alg' => $alg, 'hkdf_ctx' => $ctx);   // DEV-499 (D2): HKDF info "encedo-encrypt:v1:" || hkdf_ctx (was 'ctx' - an unknown field, ignored)
   $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/encrypt", $ret_val, $post_data, $token);
@@ -870,7 +870,7 @@ foreach($keychain as $item) {
   //echo "WRAP - PUBKEY\n";
   $msg = base64_encode( openssl_random_pseudo_bytes( 32 ) ); // example random message to wrap (KEK by NIST)
   $ctx = base64_encode( openssl_random_pseudo_bytes( 8 ) );
-  $post_array = array('kid' => $kid, 'pubkey' => $pubkey, 'alg' => "AES128", 'msg' => $msg, 'ctx' => $ctx);
+  $post_array = array('kid' => $kid, 'pubkey' => $pubkey, 'alg' => "AES128", 'msg' => $msg, 'hkdf_ctx' => $ctx);   // DEV-499 (D2): HKDF info "encedo-wrap:v1:" || hkdf_ctx (was 'ctx')
   $post_data = json_encode( $post_array );
   $ret_val = false;
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/wrap", $ret_val, $post_data, $token);
@@ -915,7 +915,7 @@ foreach (array("ECDH,ExDSA" => true, "ExDSA" => false) as $mode => $has_ecdh) {
   $peer_priv = openssl_random_pseudo_bytes(32);
   $peer_pub = sodium_crypto_scalarmult_base($peer_priv);
   $ret_val = false;
-  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, json_encode(array('kid' => $kid, 'pubkey' => base64_encode($peer_pub))), $token);
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/ecdh", $ret_val, json_encode($has_ecdh ? array('kid' => $kid, 'pubkey' => base64_encode($peer_pub)) : array('kid' => $kid, 'pubkey' => base64_encode($peer_pub), 'alg' => "SHA2-256")), $token);   // DEV-499 (D2): the negative branch sends alg - 400 regardless of the raw_ecdh policy (without alg the policy answers 403 first)
   if ($has_ecdh) {
     $z = sodium_crypto_scalarmult($peer_priv, sodium_crypto_sign_ed25519_pk_to_curve25519($ed_pub));
     if ( ($ret_stat != 200) || (base64_decode($ret_val['ecdh']) !== $z) ) { echo "ERROR: ED25519 mode $mode: ECDH (HTTP $ret_stat) differs from local X25519\n"; goto print_and_exit; }

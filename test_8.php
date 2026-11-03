@@ -203,7 +203,7 @@ $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
-if ( $ret_val['fls_state'] == 0 ) goto print_and_exit;      //should be non zero (2 for TRNG)
+if ( (intval($ret_val['fls_state']) & 0x02) == 0 ) goto print_and_exit;      // expected: FLS bit 0x02 (TRNG)   DEV-499 (D2): was != 0 (any bit)
 // f) check new Shannon entropy test value
 $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/diag/break_trng", $ret_val);
@@ -362,7 +362,7 @@ do {
     if ($counter > 24) break;   //wait max 10sec * 24times
   } else break;
 } while( true);
-if ($ret_val['fls_state'] == 0) goto print_and_exit;          // expected result if fls_state = 8
+if ( (intval($ret_val['fls_state']) & 0x08) == 0 ) goto print_and_exit;      // expected: FLS bit 0x08 (key repository integrity; maskable by cc_mode 0x08 - T-2 sets cc_mode 0)   DEV-499 (D2)
 // j) wipe-out configuration - this error cannot be cleared or the key deleted (fls prohibits)
 $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/diag/wipe_config", $ret_val);
@@ -437,7 +437,7 @@ $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
-if ( $ret_val['fls_state'] == 0 ) goto print_and_exit;      //should be non zero (2 for TRNG)
+if ( (intval($ret_val['fls_state']) & 0x04) == 0 ) goto print_and_exit;      // expected: FLS bit 0x04 (temperature)   DEV-499 (D2): was != 0 (any bit), comment said TRNG
 // f) reboot TOE to clear failer state - only possible way
 $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/reboot", $ret_val);    //works without token as device is wipe-out

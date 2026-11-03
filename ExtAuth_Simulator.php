@@ -159,9 +159,18 @@ if ($mode === "neg") {
   $mac = hash_hmac("sha256", $plain, $m, true);
   $pad0 = openssl_encrypt(str_repeat("x", 15) . "\0", "aes-128-cbc", substr($m, 0, 16), OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING, substr($m, 16, 16));
   $t = false;
-  sim_show("one block, no room for the MAC (16 B)", extauth_token_direct($cfg_domain, $app, $authreq['jti'], "A" . base64_encode(random_bytes(16)), $t), 406);
-  sim_show("ciphertext not whole blocks (20 B + MAC)", extauth_token_direct($cfg_domain, $app, $authreq['jti'], "A" . base64_encode(random_bytes(20) . $mac), $t), 406);
-  sim_show("padding byte 0", extauth_token_direct($cfg_domain, $app, $authreq['jti'], "A" . base64_encode($pad0 . $mac), $t), 406);
-  sim_show("wrong MAC", extauth_token_direct($cfg_domain, $app, $authreq['jti'], "A" . base64_encode(substr($raw, 0, -32) . random_bytes(32)), $t), 406);
-  sim_show("valid again (HEM still fine)", extauth_token_direct($cfg_domain, $app, $authreq['jti'], extauth_seal($plain, $m), $t), 200);
+  // DEV-499 (D4): a jti is accepted once (A4) - every variant gets its own request (the MAC / padding values depend on the request's session key)
+  $fresh = function () use ($cfg_domain, $app) {
+    $a = false;
+    if (extauth_request_direct($cfg_domain, "system:config", $a) != 200) exit("  ext/request failed\n");
+    $s = $a['scope'][$app['pid']]; $m = extauth_session_key($app['aid_prv'], $app['eid'], $a['jti']); $p = extauth_unseal($s, $m);
+    return array('jti' => $a['jti'], 'm' => $m, 'plain' => $p, 'raw' => base64_decode(substr($s, 1)), 'mac' => hash_hmac("sha256", $p, $m, true),
+                 'pad0' => openssl_encrypt(str_repeat("x", 15) . "\0", "aes-128-cbc", substr($m, 0, 16), OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING, substr($m, 16, 16)));
+  };
+  $r = $fresh(); sim_show("one block, no room for the MAC (16 B)", extauth_token_direct($cfg_domain, $app, $r['jti'], "A" . base64_encode(random_bytes(16)), $t), 406);
+  $r = $fresh(); sim_show("ciphertext not whole blocks (20 B + MAC)", extauth_token_direct($cfg_domain, $app, $r['jti'], "A" . base64_encode(random_bytes(20) . $r['mac']), $t), 406);
+  $r = $fresh(); sim_show("padding byte 0", extauth_token_direct($cfg_domain, $app, $r['jti'], "A" . base64_encode($r['pad0'] . $r['mac']), $t), 406);
+  $r = $fresh(); sim_show("wrong MAC", extauth_token_direct($cfg_domain, $app, $r['jti'], "A" . base64_encode(substr($r['raw'], 0, -32) . random_bytes(32)), $t), 406);
+  $r = $fresh(); sim_show("valid again (HEM still fine)", extauth_token_direct($cfg_domain, $app, $r['jti'], extauth_seal($r['plain'], $r['m']), $t), 200);
+  sim_show("the same authreply again (DEV-499 A4: jti single use)", extauth_token_direct($cfg_domain, $app, $r['jti'], extauth_seal($r['plain'], $r['m']), $t), 401);
 }

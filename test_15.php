@@ -280,26 +280,37 @@ $app = false;
 $code_ok = false;
 if ( extauth_pair_direct($cfg_domain, $token_cfg, "T-15 ExtAuth", $app, $code_ok) != 200 ) goto print_and_exit;
 if ( !$code_ok ) { echo "    ext/validate: code does not match\n"; goto print_and_exit; }
-$authreq = false;
-if ( extauth_request_direct($cfg_domain, "system:config", $authreq) != 200 ) goto print_and_exit;
-$sealed = isset($authreq['scope'][$app['pid']]) ? $authreq['scope'][$app['pid']] : false;
-$m = extauth_session_key($app['aid_prv'], $app['eid'], $authreq['jti']);
-$plain = extauth_unseal($sealed, $m);
-if ( $plain === false ) { echo "    ext/request: sealed scope missing or MAC wrong\n"; goto print_and_exit; }
-$raw = base64_decode(substr($sealed, 1));
-$mac = hash_hmac("sha256", $plain, $m, true);
-$pad0 = openssl_encrypt(str_repeat("x", 15) . "\0", "aes-128-cbc", substr($m, 0, 16), OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING, substr($m, 16, 16));
+// DEV-499 (D4): a jti is accepted once (A4) - every ext/token case below needs its own ext/request; the closure returns the request and the values derived from its jti
+$t15_req = function () use ($cfg_domain, $app) {
+  $a = false;
+  if ( extauth_request_direct($cfg_domain, "system:config", $a) != 200 ) return false;
+  $s = isset($a['scope'][$app['pid']]) ? $a['scope'][$app['pid']] : false;
+  $m = extauth_session_key($app['aid_prv'], $app['eid'], $a['jti']);
+  $p = extauth_unseal($s, $m);
+  if ( $p === false ) return false;
+  return array('jti' => $a['jti'], 'm' => $m, 'plain' => $p, 'raw' => base64_decode(substr($s, 1)), 'mac' => hash_hmac("sha256", $p, $m, true),
+               'pad0' => openssl_encrypt(str_repeat("x", 15) . "\0", "aes-128-cbc", substr($m, 0, 16), OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING, substr($m, 16, 16)));
+};
 $short = $app;
 $short['pid'] = base64_encode(substr(base64_decode($app['pid']), 0, 16));
 $t = false;
 $app16 = false;
 $cases = array();
-$cases[] = array("ext/token, valid (reference)", extauth_token_direct($cfg_domain, $app, $authreq['jti'], extauth_seal($plain, $m), $t), 200);
-$cases[] = array("ext/token, scope one block, no MAC", extauth_token_direct($cfg_domain, $app, $authreq['jti'], "A" . base64_encode(random_bytes(16)), $t), 406);
-$cases[] = array("ext/token, scope not whole blocks", extauth_token_direct($cfg_domain, $app, $authreq['jti'], "A" . base64_encode(random_bytes(20) . $mac), $t), 406);
-$cases[] = array("ext/token, scope padding byte 0", extauth_token_direct($cfg_domain, $app, $authreq['jti'], "A" . base64_encode($pad0 . $mac), $t), 406);
-$cases[] = array("ext/token, scope wrong MAC", extauth_token_direct($cfg_domain, $app, $authreq['jti'], "A" . base64_encode(substr($raw, 0, -32) . random_bytes(32)), $t), 406);
-$cases[] = array("ext/token, pid = 16 B prefix of the paired pid", extauth_token_direct($cfg_domain, $short, $authreq['jti'], extauth_seal($plain, $m), $t), 406);
+if ( ($r = $t15_req()) === false ) { echo "    ext/request: sealed scope missing or MAC wrong\n"; goto print_and_exit; }
+$cases[] = array("ext/token, valid (reference)", extauth_token_direct($cfg_domain, $app, $r['jti'], extauth_seal($r['plain'], $r['m']), $t), 200);
+if ( ($r = $t15_req()) === false ) goto print_and_exit;
+$cases[] = array("ext/token, scope one block, no MAC", extauth_token_direct($cfg_domain, $app, $r['jti'], "A" . base64_encode(random_bytes(16)), $t), 406);
+if ( ($r = $t15_req()) === false ) goto print_and_exit;
+$cases[] = array("ext/token, scope not whole blocks", extauth_token_direct($cfg_domain, $app, $r['jti'], "A" . base64_encode(random_bytes(20) . $r['mac']), $t), 406);
+if ( ($r = $t15_req()) === false ) goto print_and_exit;
+$cases[] = array("ext/token, scope padding byte 0", extauth_token_direct($cfg_domain, $app, $r['jti'], "A" . base64_encode($r['pad0'] . $r['mac']), $t), 406);
+if ( ($r = $t15_req()) === false ) goto print_and_exit;
+$cases[] = array("ext/token, scope wrong MAC", extauth_token_direct($cfg_domain, $app, $r['jti'], "A" . base64_encode(substr($r['raw'], 0, -32) . random_bytes(32)), $t), 406);
+if ( ($r = $t15_req()) === false ) goto print_and_exit;
+$cases[] = array("ext/token, pid = 16 B prefix of the paired pid", extauth_token_direct($cfg_domain, $short, $r['jti'], extauth_seal($r['plain'], $r['m']), $t), 406);
+if ( ($r = $t15_req()) === false ) goto print_and_exit;
+$cases[] = array("ext/token, the same authreply again (DEV-499 A4: jti single use)", extauth_token_direct($cfg_domain, $app, $r['jti'], extauth_seal($r['plain'], $r['m']), $t), 200);
+$cases[] = array("ext/token, replayed authreply", extauth_token_direct($cfg_domain, $app, $r['jti'], extauth_seal($r['plain'], $r['m']), $t), 401);
 $cases[] = array("ext/validate, pid 16 B", extauth_pair_direct($cfg_domain, $token_cfg, "T-15 ExtAuth 16", $app16, $code_ok, 16), 400);
 if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
@@ -438,8 +449,15 @@ foreach (array("AES256-CBC" => "iv", "AES256-GCM" => "tag") as $alg => $drop) {
   $cases[] = array("cipher/decrypt $alg without $drop", http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/decrypt", $ret_val, $post_data, $token_aes), 400);
 }
 if ( !check_cases($cases) ) goto print_and_exit;
-// b) remote authentication (ext/token): failed attempts are answered after at least 500 ms, from the 4th one after 1500 ms
+// b) remote authentication (ext/token): failed attempts are answered after at least 500 ms; after more than 3 failures after at least 1500 ms
 //    (DEV-438 phase 2 group 3: the delay guard was inverted - no delay, no count)
+// DEV-499 (D3): the counter is still loaded by the 406s of subtest 7 - a success more than 15 s after the last failure clears it, so the
+//    measurement starts from zero (400 replies are neither delayed nor counted)
+sleep(16);
+$authreq = false;
+if ( extauth_request_direct($cfg_domain, "keymgmt:list", $authreq) != 200 ) goto print_and_exit;
+$t = false;
+if ( extauth_token_direct($cfg_domain, $app, $authreq['jti'], $authreq['scope'][$app['pid']], $t) != 200 ) { echo "    ext/token (counter reset): refused\n"; goto print_and_exit; }   // expected is 200
 $times = array();
 for ($i = 0; $i < 5; $i++) {
   $t0 = hrtime(true);
@@ -449,7 +467,7 @@ for ($i = 0; $i < 5; $i++) {
   $times[] = intval((hrtime(true) - $t0) / 1000000);
   if ( $ret_stat != 401 ) { echo "    ext/token with an invalid authreply: HTTP $ret_stat, expected 401\n"; goto print_and_exit; }
 }
-if ( ($times[0] < 450) || ($times[4] < 1400) ) { echo "    ext/token failure delays (ms): " . implode(", ", $times) . " - expected >= 500, from the 4th >= 1500\n"; goto print_and_exit; }
+if ( ($times[0] < 450) || ($times[0] >= 1400) || ($times[4] < 1400) ) { echo "    ext/token failure delays (ms): " . implode(", ", $times) . " - expected >= 500 (not 1500) for the 1st, >= 1500 for the 5th\n"; goto print_and_exit; }   // DEV-499 (D3)
 sleep(16);                                                   // let the failure counter expire (15 s lockdown window)
 if ( !check_alive($uptime) ) goto print_and_exit;
 // c) set result
@@ -507,12 +525,14 @@ foreach (array("hmac/verify, unknown kid" => array("https", "POST", "/api/crypto
                "exdsa/verify, unknown kid" => array("https", "POST", "/api/crypto/exdsa/verify", array('kid' => $kid_none, 'msg' => $msg, 'alg' => "Ed25519", 'sign' => base64_encode($sig)), $keys['none'][1], 404),
                "cipher/encrypt, unknown kid" => array("https", "POST", "/api/crypto/cipher/encrypt", array('kid' => $kid_none, 'msg' => $msg, 'alg' => "AES256-CBC"), $keys['none'][1], 404),   // DEV-481 (B7): CBC (ECB is off in the build)
                "cipher/wrap, unknown kid" => array("https", "POST", "/api/crypto/cipher/wrap", array('kid' => $kid_none, 'msg' => base64_encode(random_bytes(32)), 'alg' => "AES256"), $keys['none'][1], 404),
-               "ecdh, unknown kid" => array("https", "POST", "/api/crypto/ecdh", array('kid' => $kid_none, 'pubkey' => $peer), $keys['none'][1], 404),
+               "ecdh, unknown kid" => array("https", "POST", "/api/crypto/ecdh", array('kid' => $kid_none, 'pubkey' => $peer, 'alg' => "SHA2-256"), $keys['none'][1], 404),   // DEV-499 (D2): alg - without it the raw_ecdh policy answers 403 first
                "pqc/mlkem/encaps, unknown kid" => array("https", "POST", "/api/crypto/pqc/mlkem/encaps", array('kid' => $kid_none), $keys['none'][1], 404),
                "cipher/encrypt, ED25519 key" => array("https", "POST", "/api/crypto/cipher/encrypt", array('kid' => $keys['ed'][0], 'msg' => $msg, 'alg' => "AES256-CBC"), $keys['ed'][1], 400),   // DEV-481 (B7): CBC (ECB is off in the build)
-               "ecdh, ExDSA-only key" => array("https", "POST", "/api/crypto/ecdh", array('kid' => $keys['ed'][0], 'pubkey' => $peer), $keys['ed'][1], 400),
+               "ecdh, ExDSA-only key" => array("https", "POST", "/api/crypto/ecdh", array('kid' => $keys['ed'][0], 'pubkey' => $peer, 'alg' => "SHA2-256"), $keys['ed'][1], 400),   // DEV-499 (D2)
+               "ecdh, alg not a string (DEV-499 B7)" => array("https", "POST", "/api/crypto/ecdh", array('kid' => $kid_ecdh, 'pubkey' => $peer, 'alg' => 5), $token_ecdh, 400),
+               "system/config, storage_mode 0x10 (DEV-499 B2: Disk1 without crypto)" => array("https", "POST", "/api/system/config", array('storage_mode' => 16), $token_cfg, 400),
                "hmac/hash, alg too long" => array("https", "POST", "/api/crypto/hmac/hash", array('kid' => $keys['hm'][0], 'msg' => $msg, 'alg' => "SHA2-256-X"), $keys['hm'][1], 400),
-               "ecdh, no pubkey / ext_kid" => array("https", "POST", "/api/crypto/ecdh", array('kid' => $kid_ecdh), $token_ecdh, 400),
+               "ecdh, no pubkey / ext_kid" => array("https", "POST", "/api/crypto/ecdh", array('kid' => $kid_ecdh, 'alg' => "SHA2-256"), $token_ecdh, 400),   // DEV-499 (D2)
                "cipher/decrypt CBC, 20 B" => array("https", "POST", "/api/crypto/cipher/decrypt", array('kid' => $kid_aes, 'msg' => base64_encode(random_bytes(20)), 'alg' => "AES256-CBC", 'iv' => base64_encode(random_bytes(16))), $token_aes, 400),
                "keymgmt/search, mode not a string" => array("https", "POST", "/api/keymgmt/search", array('descr' => "^" . base64_encode("CCTEST:"), 'mode' => 5), $token_keylist, 400),
                "keymgmt/list, offset not a number" => array("https", "GET", "/api/keymgmt/list/abc", false, $token_keylist, 400),
@@ -584,14 +604,20 @@ $cases[] = array("search, Transfer-Encoding: chunked", raw_https_request($cfg_do
 //    (DEV-472: the DER of the TLS private key was returned)
 $token_get = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:get");
 if ($token_get == false) goto print_and_exit;
-$ret_val = false;
-$not_used = false;
-$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/list", $ret_val, $not_used, $token_keylist);
-if ( $ret_stat != 200 ) goto print_and_exit;
 $tls = array();
-foreach ($ret_val['list'] as $k) {
-  if ( in_array(@$k['label'], array("TLS PrivateKey", "TLS Certificate")) ) $tls[$k['label']] = $k['kid'];
-}
+$offset = 0;
+do {                                                          // DEV-499 (D2): all pages - a renewed TLS record is stored after the keys of T-10 .. T-14; the check-in renewal labels it "TLS x509 CERT"
+  $ret_val = false;
+  $not_used = false;
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/list/$offset", $ret_val, $not_used, $token_keylist);
+  if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
+  foreach ($ret_val['list'] as $k) {
+    if ( @$k['label'] === "TLS PrivateKey" ) $tls["TLS PrivateKey"] = $k['kid'];
+    if ( in_array(@$k['label'], array("TLS Certificate", "TLS x509 CERT")) ) $tls["TLS Certificate"] = $k['kid'];
+  }
+  $offset = $offset + $ret_val['listed'];
+  if ( ($offset >= $ret_val['total']) || ($ret_val['listed'] == 0) ) break;
+} while(true);
 if ( count($tls) != 2 ) { echo "    TLS key / certificate not listed\n"; goto print_and_exit; }
 $got = array();
 foreach (array("TLS PrivateKey" => false, "TLS Certificate" => true) as $label => $der) {
@@ -767,6 +793,9 @@ $t = false;
 $t2 = false;
 $cases = array();
 $cases[] = array("ext/token, tampered blob", extauth_token_direct($cfg_domain, $app, $authreq['jti'], "A" . base64_encode($raw), $t2), 406);
+$authreq = false;   // DEV-499 (D4): the jti above is consumed by the tampered attempt - a fresh request for the valid case
+if ( extauth_request_direct($cfg_domain, array("keymgmt:list", "logger:get"), $authreq) != 200 ) goto print_and_exit;
+$sealed = $authreq['scope'][$app['pid']];
 $cases[] = array("ext/token, 2 values", extauth_token_direct($cfg_domain, $app, $authreq['jti'], $sealed, $t), 200);
 $ret_val = false;
 $cases[] = array("ext token [keymgmt:list, logger:get], logger/list/0", http_transaction("https", "GET", $cfg_domain, "/api/logger/list/0", $ret_val, $not_used, $t), 200);

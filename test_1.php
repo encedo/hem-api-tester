@@ -198,9 +198,15 @@ if ( $ret_stat != 401 ) goto print_and_exit;               // expected 401 - inv
 $post_data = '{"checked":"somedata"';                       // malformated JSON string - missing closing '}', as in subtest 5
 $ret_stat = raw_https_request($cfg_domain, "POST /api/system/checkin HTTP/1.1\r\nhost: $cfg_domain\r\ncontent-type: application/json\r\ncontent-length: " . strlen($post_data) . "\r\nconnection: close\r\n\r\n" . $post_data);
 if ( $ret_stat != 400 ) goto print_and_exit;               // expected 400 - "Bad Request" (JSON parsed and rejected)
-// e) Content-Length that is not a number (DEV-430)
-$ret_stat = raw_https_request($cfg_domain, "POST /api/system/checkin HTTP/1.1\r\nHost: $cfg_domain\r\nContent-Type: application/json\r\nContent-Length: " . strlen($post_data) . "abc\r\nConnection: close\r\n\r\n" . $post_data);
-if ( $ret_stat != 400 ) goto print_and_exit;               // expected 400 - "Bad Request"
+// e) Content-Length that is not a number (DEV-430) - DEV-499 (D2): a valid ext/init body without a token gets 409 / 401 from the handler
+//    (control request), so 400 can only come from the Content-Length check (was: the malformed JSON of step d, which gives 400 by itself); the connection must be closed
+$post_data = '{"epk":"SfxY+3RupkwK82cpOO+30VHyPMm0LAlYT+WeNtpIx2A="}';    // valid body, as in T-3
+$ret_stat = raw_https_request($cfg_domain, "POST /api/auth/ext/init HTTP/1.1\r\nHost: $cfg_domain\r\nContent-Type: application/json\r\nContent-Length: " . strlen($post_data) . "\r\nConnection: close\r\n\r\n" . $post_data);
+if ( ($ret_stat != 409) && ($ret_stat != 401) ) goto print_and_exit;   // expected 409 (not initialised) or 401 (no token) - control
+$hdrs = false;
+$ret_stat = raw_https_request($cfg_domain, "POST /api/auth/ext/init HTTP/1.1\r\nHost: $cfg_domain\r\nContent-Type: application/json\r\nContent-Length: " . strlen($post_data) . "abc\r\nConnection: keep-alive\r\n\r\n" . $post_data, $hdrs);
+if ( $ret_stat != 400 ) goto print_and_exit;               // expected 400 - "Bad Request" (Content-Length not a number)
+if ( strcasecmp(@$hdrs['connection'], "close") != 0 ) goto print_and_exit;   // expected close, also when keep-alive was asked
 // f) CORS preflight with Private Network Access request (DEV-426); TOE config 'origin' is "*" (default, also after T-2)
 $origin = "https://hem-api-tester.encedo.com";
 $hdrs = false;

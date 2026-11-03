@@ -182,7 +182,7 @@ if ($file_contents == false) goto print_and_exit;                    // exit on 
 $post_data = $file_contents;
 $ret_val = false;
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/upgrade/upload_fw", $ret_val, $post_data, $token, "firmware.bin");
-if ($ret_stat == false) goto print_and_exit;                     // exit on error
+if ($ret_stat != 200) goto print_and_exit;                       // expected 200 - file stored (no body)   DEV-499 (D2): was == false (any 4xx/5xx passed)
 //  f) check uploaded file integrity
 $counter = 0;
 do {
@@ -276,7 +276,7 @@ if ($file_contents == false) goto print_and_exit;                    // exit on 
 $post_data = $file_contents;
 $ret_val = false;
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/upgrade/upload_ui", $ret_val, $post_data, $token, "webroot.tar");
-if ($ret_stat == false) goto print_and_exit;                     // exit on error
+if ($ret_stat != 200) goto print_and_exit;                       // expected 200 - file stored (no body)   DEV-499 (D2): was == false (any 4xx/5xx passed)
 //  f) check uploaded file integrity
 $counter = 0;
 do {
