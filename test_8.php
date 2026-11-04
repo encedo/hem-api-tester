@@ -83,6 +83,7 @@ do {
   } else break;
 } while( true);
 $test_finished_at = time();
+if ( isset($ret_val['kat_busy']) ) { echo "ERROR: KAT still busy after 240 s\n"; goto print_and_exit; }   // DEV-502 (T-8.1): only fls_state was checked
 if ($ret_val['fls_state'] != 0) goto print_and_exit;          // expected result if fls_state = 0 means NO ERRORS detected
 // f) set result
 $test_cfg['subtests'][1] = 'OK';                              // mark this subtest as OK

@@ -415,7 +415,7 @@ function encedo_log_integrity_check($pubkey, $log_array, &$output_log){
     }
   }
 
-  return true;  //all process, no errors found
+  return ($cnt > 0);  //all process, no errors found; DEV-502 (V1): at least one HMAC line checked (was true with no key line)
 }
 
 
@@ -435,6 +435,7 @@ function encedo_log_verify($pubkey_dev, $log_array, &$report) {
       if ($report['version'] == 1) {                                   // v1: the old check wants the 7-field lines only (no '#' comment, no empty line)
         $v1 = array();
         foreach ($log_array as $l) if (count(explode('|', $l)) == 7) { $v1[] = $l; $report['lines']++; }
+        if ( ($f[2] !== '0') || ($f[3] !== '0') ) { $report['errors'][] = "line $n: no key line at the top (a v2 file without its header is not a v1 file)"; return false; }   // DEV-502 (V1)
         $out = '';
         return encedo_log_integrity_check($pubkey_dev, $v1, $out);
       }

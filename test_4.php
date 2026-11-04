@@ -168,7 +168,7 @@ $post_data = json_encode( array( 'useR' => $new_user_name) ); //spot the typo
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200
-if ( $ret_val['updated'] == true) goto print_and_exit;      //updated should be false - firmware is looking up for know arguments only
+if ( @$ret_val['updated'] !== false ) goto print_and_exit;  //updated must be false - firmware is looking up for know arguments only; DEV-502 (T-4.2): a missing field passed
 //re-read TOE configuration to check no changes made
 $ret_val = false;
 $not_used = false;    //dummy

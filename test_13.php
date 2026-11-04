@@ -279,6 +279,7 @@ foreach (array('fw_cid' => 'fwc', 'bl_cid' => 'blc') as $f => $v) {
   if ( isset($body['device'][$f]) && !preg_match('/^b[a-z2-7]{58}$/', $body['device'][$f]) ) { echo "ERROR: $f is not a CIDv1 base32: " . $body['device'][$f] . "\n"; goto print_and_exit; }
 }
 $skid = sha1("\x04" . t13_b64url_dec(json_decode(t13_b64url_dec(explode('.', $jwt)[0]), true)['jwk']['x']) . t13_b64url_dec(json_decode(t13_b64url_dec(explode('.', $jwt)[0]), true)['jwk']['y']));
+$t13_att_skid = $skid;   // DEV-502 (T-13.1): compared with the device certificate in 13.6
 // c) the attestation key is the same in the next token, jti differs
 $jti = $body['jti'];
 $nonce = base64_encode(openssl_random_pseudo_bytes(32));
@@ -532,6 +533,22 @@ $dev_pub = openssl_pkey_get_public($crt_pem);
 if ($dev_pub === false) { echo "ERROR: device certificate does not parse\n"; goto print_and_exit; }
 $ec = openssl_pkey_get_details($dev_pub)['ec'];
 $skid = base64_encode(sha1("\x04" . str_pad($ec['x'], 32, "\0", STR_PAD_LEFT) . str_pad($ec['y'], 32, "\0", STR_PAD_LEFT), true));
+if ( isset($t13_att_skid) && (bin2hex(base64_decode($skid)) !== $t13_att_skid) ) { echo "ERROR: the attestation JWT key is not the key of the device certificate\n"; goto print_and_exit; }   // DEV-502 (T-13.1)
+// DEV-502 (T-13.1 / 13.6): end to end - the device certificate chains to the Encedo Root CA of pki.encedo.com (root pinned by its
+//   SHA-256, intermediates and CRLs downloaded) and is not revoked; with the check above the attestation JWT is signed by a certified key
+$t13_pki = "https://pki.encedo.com/";
+$t13_root_fp = "b28f4ee4cf26028260cf4f0db18bd2fb7234d172925797dca7f81e53a2816e9c";   // Encedo Root CA RSA 4096, SHA-256 of the DER
+$pki_root = @file_get_contents($t13_pki . "root-ca.pem");
+$pki_chain = @file_get_contents($t13_pki . "intermediates-chain.pem");   // Custody CA + Attestation CA
+$pki_crls = "";
+foreach (array("root-ca.crl", "attestation-ca.crl", "custody-ca.crl") as $f) {
+  $der = @file_get_contents($t13_pki . $f);
+  if ( $der === false ) { echo "ERROR: Encedo PKI: $f not downloaded\n"; goto print_and_exit; }
+  $pki_crls .= "-----BEGIN X509 CRL-----\n" . chunk_split(base64_encode($der), 64, "\n") . "-----END X509 CRL-----\n";
+}
+if ( ($pki_root === false) || ($pki_chain === false) || (openssl_x509_fingerprint($pki_root, "sha256") !== $t13_root_fp) ) { echo "ERROR: Encedo PKI: root CA not downloaded or not the pinned one\n"; goto print_and_exit; }
+if ( !t13_ossl(array("verify", "-no_check_time", "-crl_check_all", "-CRLfile", t13_tmp($pki_crls), "-CAfile", t13_tmp($pki_root), "-untrusted", t13_tmp($pki_chain), t13_tmp($crt_pem))) ) { echo "ERROR: the device certificate does not chain to the Encedo Root CA or is revoked\n"; goto print_and_exit; }
+// the device certificate stays valid after its notAfter: the CA signature and the CRL count, not the date (-no_check_time above)
 $p = explode('.', $ret_val['genuine']);
 if ( (count($p) != 3) || ($p[0] !== $skid) || (strlen(base64_decode($p[2], true)) != 64) ) { echo "ERROR: genuine without nonce: " . $ret_val['genuine'] . "\n"; goto print_and_exit; }   // DEV-484: SIG r || s 64 B
 $sig = ecdsa_rs2der(base64_decode($p[2]));   // DEV-484: SIG r || s -> DER

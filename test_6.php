@@ -116,6 +116,9 @@ $test_cfg['subtests'][1] = 'OK';                              // mark this subte
 TEST2:
 echo "  subtest-2\n";
 $test_cfg['subtests'][2] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
+// DEV-502 (T-6.2): a backend / app test - after a deny the app sends no signed authreply, so nothing reaches the HEM after
+//   ext/request (asserted in 6.1); the HEM side (ext/token refuses a reply that is not signed by the paired app) is T-15
+echo "    (backend / app path: the HEM is not called after a deny)\n";
 // a) perform REMOTE USER authentication and expect DENY returned
 // get backend EPK key
 $ret_val = false;

@@ -118,6 +118,7 @@ do {
   $offset = $offset + $listed;
   if ($offset >= $total) break;
 } while (true);
+if ( count($keychain) == 0 ) { echo "ERROR: no T-10 keys found - run T-10 first\n"; goto print_and_exit; }   // DEV-502: the loops below ran 0 times and passed
 // e) ranodm message to perform test on
 $msg_raw = base64_encode( openssl_random_pseudo_bytes( 250 ) );    // ranodm bytes of data
 $keys_to_test = $ret_val['list'];
@@ -206,6 +207,7 @@ do {
   $offset = $offset + $listed;
   if ($offset >= $total) break;   //?
 } while (true);
+if ( count($keychain) == 0 ) { echo "ERROR: no T-10 keys found - run T-10 first\n"; goto print_and_exit; }   // DEV-502: the loops below ran 0 times and passed
 $keys_to_test = $keychain;
 $msg_raw = base64_encode( openssl_random_pseudo_bytes( 32 ) );    // random
 // DEV-484: local OpenSSL cross-check of every ECDSA signature: SubjectPublicKeyInfo DER prefix of a compressed SEC1 point, coordinate size
@@ -430,6 +432,7 @@ do {
   $offset = $offset + $listed;
   if ($offset >= $total) break;   //?
 } while (true);
+if ( count($keychain) == 0 ) { echo "ERROR: no T-10 keys found - run T-10 first\n"; goto print_and_exit; }   // DEV-502: the loops below ran 0 times and passed
 // b) iterate over found keys
 $counter = 0;
 foreach($keychain as $item) {
@@ -559,6 +562,7 @@ do {
   $offset = $offset + $listed;
   if ($offset >= $total) break;   //?
 } while (true);
+if ( count($keychain) == 0 ) { echo "ERROR: no T-10 keys found - run T-10 first\n"; goto print_and_exit; }   // DEV-502: the loops below ran 0 times and passed
 // b) iterate over found keys
 $counter = 0;
 foreach($keychain as $item) {
@@ -645,6 +649,7 @@ do {
   $offset = $offset + $listed;
   if ($offset >= $total) break;   //?
 } while (true);
+if ( count($keychain) == 0 ) { echo "ERROR: no T-10 keys found - run T-10 first\n"; goto print_and_exit; }   // DEV-502: the loops below ran 0 times and passed
 $msg_raw = base64_encode( openssl_random_pseudo_bytes( 8 ) );    // ranodm
 //below example public keys will be used to perform ECDH
 $supported_key_types_ecdh = array(  "SECP256R1"  => "AyH/xovr5aRefadZgVL8+ydEwEa6dzgBXmvPxFv+/LIq",
@@ -1068,6 +1073,7 @@ do {
   $offset = $offset + $listed;
   if ($offset >= $total) break;
 } while (true);
+if ( count($keychain) == 0 ) { echo "ERROR: no T-10 keys found - run T-10 first\n"; goto print_and_exit; }   // DEV-502: the loops below ran 0 times and passed
 // d) iterate over found keys to call ML-KEM Encapsulation and the Decapsulation
 //var_dump($keychain);
 $counter = 0;
@@ -1134,6 +1140,7 @@ do {
   $offset = $offset + $listed;
   if ($offset >= $total) break;
 } while (true);
+if ( count($keychain) == 0 ) { echo "ERROR: no T-10 keys found - run T-10 first\n"; goto print_and_exit; }   // DEV-502: the loops below ran 0 times and passed
 // b) iterate over found keys to call ML-DSA Sign & Verification
 //var_dump($keychain);
 $token_keyget = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:get");   // DEV-481 (B3): public key for mu

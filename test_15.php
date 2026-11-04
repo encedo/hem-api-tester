@@ -95,9 +95,12 @@ if ( !check_alive($uptime) ) goto print_and_exit;
 $ret = helper_checkin($cfg_domain);
 if ($ret == false) goto print_and_exit;                     // exit on error
 // d) HTTP request body (DEV-438 A1): only Content-Length bytes are the body, a missing length is refused
-$body = "{}" . str_repeat("x", 200);                        // bytes after the declared body arrive together with the headers
+// DEV-502 (T-15.1 d): a request that is 200 only when the extra bytes are not read (auth/token with "{}" gave 400 either way);
+//   keymgmt/search without a token (prefix pattern of 6 B) answers 200 also when nothing matches
+$sbody = json_encode(array('descr' => "^" . base64_encode("CCTEST")));
+$body = $sbody . str_repeat("x", 200);                      // bytes after the declared body arrive together with the headers
 $cases = array();
-$cases[] = array("body longer than Content-Length", raw_https_request($cfg_domain, "POST /api/auth/token HTTP/1.1\r\nHost: $cfg_domain\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n" . $body), 400);
+$cases[] = array("body longer than Content-Length", raw_https_request($cfg_domain, "POST /api/keymgmt/search HTTP/1.1\r\nHost: $cfg_domain\r\nContent-Type: application/json\r\nContent-Length: " . strlen($sbody) . "\r\nConnection: close\r\n\r\n" . $body), 200);
 $cases[] = array("no Content-Length", raw_https_request($cfg_domain, "POST /api/auth/token HTTP/1.1\r\nHost: $cfg_domain\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}"), 411);
 if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
@@ -357,8 +360,7 @@ echo "  subtest-9\n";
 $test_cfg['subtests'][9] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) a token without a scope is not issued (DEV-436: auth/token answers 400; DEV-438: an empty scope was a crash)
 $cases = array();
-$token_noscope = helper_authorize($cfg_domain, $cfg_passpharse, "");
-$cases[] = array("auth/token with an empty scope is refused", ($token_noscope === false) ? 400 : 200, 400);
+$cases[] = array("auth/token with an empty scope is refused", auth_with_claims(function ($c) { $c['scope'] = ""; return $c; }), 400);   // DEV-502 (T-15.9 a): the real status (was 400 for any failure of helper_authorize)
 $not_used = false;
 // b) firmware upload: a wrong extension and a file of 3 MiB or more are answered (DEV-438: was no response at all)
 $token_upg = helper_authorize($cfg_domain, $cfg_passpharse, "system:upgrade");
