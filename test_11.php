@@ -7,7 +7,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-11";
 $test_descr = "Cryptography functionality";
-$test_subtest_cnt = 12;
+$test_subtest_cnt = 13;   // DEV-502: 13 cipher field types
 
 
 function t11_ossl($args) {                  // OpenSSL CLI (>= 3.5); returns true on exit code 0 - as t13_ossl (T-13)
@@ -1472,6 +1472,46 @@ array_map('unlink', glob("$dir/*"));
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
 
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 13       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST13:
+echo "  subtest-13\n";
+$test_cfg['subtests'][13] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-502 (G3 D6): an optional cipher field of a wrong JSON type is 400 - was ignored (aad array -> GCM without AAD, hkdf_ctx number -> no context)
+$token_keygen = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:gen");
+if ($token_keygen == false) goto print_and_exit;
+$ret_val = false;
+$post_data = json_encode(array('label' => "T-11.13 AES", 'type' => "AES256", 'descr' => base64_encode("CCTEST:T-11.13_AES")));
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_keygen);
+if ( $ret_stat != 200 ) goto print_and_exit;
+$kid13 = $ret_val['kid'];
+$token = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid13");
+if ($token == false) goto t11_13_end;
+$msg = base64_encode(random_bytes(32));
+$ok13 = true;
+foreach (array(array("encrypt", array('alg' => "AES256-GCM", 'aad' => base64_encode("x")), 200),     // control
+               array("encrypt", array('alg' => "AES256-GCM", 'aad' => array(1)), 400),
+               array("encrypt", array('alg' => "AES256-GCM", 'aad' => 1), 400),
+               array("encrypt", array('alg' => "AES256-GCM", 'hkdf_ctx' => 1), 400),
+               array("encrypt", array('alg' => 256), 400),
+               array("decrypt", array('alg' => "AES256-CBC", 'iv' => 1), 400)) as $c) {
+  $ret_val = false;
+  $post_data = json_encode(array_merge(array('kid' => $kid13, 'msg' => $msg), $c[1]));
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/" . $c[0], $ret_val, $post_data, $token);
+  if ( $ret_stat != $c[2] ) { echo "ERROR: " . $c[0] . " " . json_encode($c[1]) . ": HTTP $ret_stat (" . $c[2] . " expected)\n"; $ok13 = false; }
+}
+// b) set result
+if ($ok13) $test_cfg['subtests'][13] = 'OK';                  // mark this subtest as OK
+t11_13_end:
+$ret_val = false;
+$dummy_val = false;
+$ret_stat = http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/$kid13", $ret_val, $dummy_val, $token_keydel);
+if ( $ret_stat != 200 ) $test_cfg['subtests'][13] = 'ERROR';
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
 
 /////////////////////////////////////////////////////////////////////
 // Test summary      ////////////////////////////////////////////////
