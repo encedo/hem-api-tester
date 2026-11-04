@@ -731,8 +731,8 @@ foreach (array("array, 2nd value matches (keymgmt/list)" => array("/api/keymgmt/
                "array, storage:disk0 (storage/lock)" => array("/api/storage/lock", $t_st, 200),
                "string token, crypto/random (no scope)" => array("/api/crypto/random", $t_list, 200),
                "array token, crypto/random (no scope)" => array("/api/crypto/random", $t_arr, 200),
-               "string token, system/selftest (no scope)" => array("/api/system/selftest", $t_list, 200),
-               "array token, system/selftest (no scope)" => array("/api/system/selftest", $t_arr, 200),
+               "string token, system/selftest (system:config needed)" => array("/api/system/selftest", $t_list, 403),   // DEV-501 (G5 D12): was any scope -> 200
+               "array token, system/selftest (system:config needed)" => array("/api/system/selftest", $t_arr, 403),    // DEV-501 (G5 D12)
                "string token, config/attestation (no scope)" => array("/api/system/config/attestation", $t_list, 200),
                "array token, config/attestation (no scope)" => array("/api/system/config/attestation", $t_arr, 200)) as $name => $v) {
   $ret_val = false;
