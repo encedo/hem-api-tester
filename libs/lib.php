@@ -442,6 +442,7 @@ function encedo_log_verify($pubkey_dev, $log_array, &$report) {
     $text = substr($line, 0, strrpos($line, '|') + 1);
     $sig = base64url_decode($f[6]);
     $seq = hexdec($f[0]);
+    if (($prev_seq === null) && ($seq != 0)) { $report['errors'][] = "line $n: the first line is not seq 0 (file cut at the front)"; return false; }   // DEV-502 (G7 C1): a file cut down to a rotation header verified as complete
     if (($prev_seq !== null) && ($seq != $prev_seq + 1)) $report['gaps'][] = dechex($prev_seq) . "->" . $f[0];
     $prev_seq = $seq;
     if (($f[2] === '0') && ($f[3] === '0') && ($f[4] === 'v2')) {     // header: data = pub_file (32) || Ed25519_dev(pub_file) (64)
