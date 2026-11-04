@@ -3,12 +3,13 @@
 //   php tools/hem_log_verify.php <device log public key, base64 or base64url> <file.log>
 // The key is "key" from GET /api/logger/key. Exit code 0 = verified, 1 = not verified / gaps, 2 = usage.
 if ($argc != 3) { fwrite(STDERR, "usage: php hem_log_verify.php <pub_dev base64> <file.log>\n"); exit(2); }
+$file = realpath($argv[2]);                                  // resolve before the chdir below - a relative path is relative to the caller's directory
 chdir(__DIR__ . "/..");
 include "libs/lib.php";
 $pub = base64_decode(strtr($argv[1], '-_', '+/'));
 if (strlen($pub) != 32) { fwrite(STDERR, "the public key is not 32 B\n"); exit(2); }
-if (!is_readable($argv[2])) { fwrite(STDERR, "cannot read " . $argv[2] . "\n"); exit(2); }
-$lines = preg_split("/\r?\n/", file_get_contents($argv[2]));
+if (($file === false) || !is_readable($file)) { fwrite(STDERR, "cannot read " . $argv[2] . "\n"); exit(2); }
+$lines = preg_split("/\r?\n/", file_get_contents($file));
 $report = array();
 $ok = encedo_log_verify($pub, $lines, $report);
 printf("%s: format v%d, %d lines, %d header(s), %d rotation(s), %d events lost\n", $argv[2], $report['version'], $report['lines'], $report['headers'], $report['rotations'], $report['lost']);
