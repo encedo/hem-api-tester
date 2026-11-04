@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 17;   // DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe)
+$test_subtest_cnt = 18;   // DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay
 
 
 // initialize the execution env
@@ -813,6 +813,42 @@ $test_cfg['subtests'][17] = 'OK';                             // mark this subte
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
 
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 18       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST18:
+echo "  subtest-18\n";
+$test_cfg['subtests'][18] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-502 (G5 D1): a request without the Host header is answered (strstr(NULL) before) and carries the hostname
+$cases = array();
+$hdrs = false; $body = false;
+$cases[] = array("GET status without Host", raw_https_request($cfg_domain, "GET /api/system/status HTTP/1.0\r\nConnection: close\r\n\r\n", $hdrs, $body), 200);
+$j = json_decode((string)$body, true);
+$cases[] = array("status without Host carries hostname", (is_array($j) && isset($j['hostname'])) ? 200 : 500, 200);
+// b) DEV-502 (G1 D1): a consumed auth jti stays consumed for its whole 120 s window, not only for the next 16 validations
+$ret_val = false;
+$ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/auth/token", $ret_val);
+if ( $ret_stat != 200 ) goto print_and_exit;
+$secret = hash_pbkdf2("sha256", $cfg_passpharse, $ret_val['eid'], 600000, 32, true);
+$iat = time() - 5;
+$auth = ejwt_generate(array('jti' => $ret_val['jti'], 'aud' => $ret_val['spk'], 'exp' => $iat + 3600, 'iat' => $iat,
+                            'iss' => base64_encode(sodium_crypto_box_publickey_from_secretkey($secret)), 'scope' => "keymgmt:list"), $secret, base64_decode($ret_val['spk']));
+$post_data = json_encode(array('auth' => $auth));
+$ret_val = false;
+$cases[] = array("auth JWT, first use", http_transaction("http", "POST", $cfg_domain, "/api/auth/token", $ret_val, $post_data), 200);
+for ($i = 0; $i < 20; $i++) {                                 // 20 other consumed nonces - the old ring of 16 evicted the first one here
+  if ( helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list") == false ) goto print_and_exit;
+}
+$ret_val = false;
+$cases[] = array("auth JWT replayed after 20 other authorizations", http_transaction("http", "POST", $cfg_domain, "/api/auth/token", $ret_val, $post_data), 401);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// c) set result
+$test_cfg['subtests'][18] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 14       ////////////////////////////////////////////////
