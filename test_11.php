@@ -312,7 +312,7 @@ foreach($keys_to_test as $item) {
   } else {
     // DEV-484: public key of the key pair for the local check
     $ret_val = false;
-    $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/$kid", $ret_val, $dummy_val, $token_keyget);
+    $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/$kid", $ret_val, false, $token_keyget);   // DEV-502: $dummy_val was undefined (a warning since post_data is by value)
     if ( ($ret_stat != 200) || !isset($ret_val['pubkey']) || !isset($t11_ec[$type]) ) { echo "ERROR: keymgmt/get $type: HTTP $ret_stat\n"; goto print_and_exit; }
     $pub_pem = "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode(hex2bin($t11_ec[$type][0]) . base64_decode($ret_val['pubkey'])), 64, "\n") . "-----END PUBLIC KEY-----\n";
     $sig_len = 2 * $t11_ec[$type][1];
@@ -1032,7 +1032,7 @@ $dummy_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $dummy_val, $token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
-sleep(30);  //wait
+if ( !helper_wait_reboot($cfg_domain) ) goto print_and_exit;    // DEV-502: wait for the new boot (was a fixed sleep)
 if ( !$fls_ok ) goto print_and_exit;                        // failure state not entered or the request not refused with 409
 // i) set result
 $test_cfg['subtests'][7] = 'OK';                           // mark this subtest as OK
@@ -1180,7 +1180,7 @@ foreach($keychain as $item) {
   // DEV-481 (B3): ML-DSA-mu - mu made here (FIPS 204: tr = SHAKE256(pk, 64), mu = SHAKE256(tr || 00 00 || M, 64)); the signature verifies as pure ML-DSA over M
   $ret_val = false;
   $dummy_val = false;
-  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/$kid", $ret_val, $dummy_val, $token_keyget);
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/$kid", $ret_val, false, $token_keyget);   // DEV-502: $dummy_val was undefined (a warning since post_data is by value)
   if ( $ret_stat != 200 ) goto print_and_exit;
   $mu = t11_shake256_64( t11_shake256_64(base64_decode($ret_val['pubkey'])) . "\x00\x00" . base64_decode($msg_raw) );
   if ($mu === false) { echo "ERROR: openssl >= 3.5 needed (SHAKE256)\n"; goto print_and_exit; }

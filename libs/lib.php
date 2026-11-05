@@ -60,7 +60,7 @@ function parseHeaders( $headers )
     return $head;
 }
 
-function http_transaction($protocol, $method, $domain, $path, &$ret_data = false, &$post_data = false, $token = false, $upload_file = false) {
+function http_transaction($protocol, $method, $domain, $path, &$ret_data = false, $post_data = false, $token = false, $upload_file = false) {   // DEV-502: $post_data by value (never written; by reference gave a notice for every json_encode() argument)
 
   global $cfg_debug_lib;
 
@@ -300,6 +300,18 @@ function helper_checkin($cfg_domain) {
   return true;
 }
 
+// waits until the device is back after GET /api/system/reboot: status answers with an uptime that started after this call; max $timeout s
+function helper_wait_reboot($cfg_domain, $timeout = 60) {   // DEV-502: replaces the fixed sleeps after a reboot
+  $t0 = time();
+  while ((time() - $t0) < $timeout) {
+    sleep(1);
+    $ret_val = false;
+    $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);
+    if ( ($ret_stat == 200) && isset($ret_val['uptime']) && (intval($ret_val['uptime']) <= (time() - $t0)) ) return true;
+  }
+  return false;
+}
+
 
 function helper_authorize($cfg_domain, $password, $scope = "scope", $exp = 3600) {
   global $cfg_debug_lib;
@@ -390,12 +402,11 @@ function encedo_log_integrity_check($pubkey, $log_array, &$output_log){
 
     if (($rec[2] == 0) && ($rec[3] == 0)) {
 
-      if (isset($key)) $key2 = $key;
       $key = base64url_decode( $rec[4] );
       $signa = base64url_decode( $rec[5] );
       $ret = sodium_crypto_sign_verify_detached($signa, $key, $pubkey);
       if ($ret !== true) {
-        echo "ERROR: Signature error on $hem at line: $cnt\n";
+        echo "ERROR: Signature error at line: $cnt\n";   // DEV-502: $hem was undefined here
         return false;
       }
       $output_log = $output_log . "$line\n";
@@ -403,7 +414,6 @@ function encedo_log_integrity_check($pubkey, $log_array, &$output_log){
       if ($key != false ) {
         $hmac_bin = base64url_decode( $hmac );
         $exp_hmac = hash_hmac("sha256", $msg, $key, true);
-        $tst = base64url_encode($exp_hmac);
         if (strncmp($hmac_bin, $exp_hmac, 16) !== 0) {
           return false;
         }

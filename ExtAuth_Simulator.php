@@ -38,7 +38,11 @@ function sim_load_state() {
   return array('pid' => $in['pid'], 'aid_prv' => base64_decode($in['aid_prv']), 'aid' => base64_decode($in['aid']), 'eid' => base64_decode($in['eid']));
 }
 
+$sim_fail = 0;                                               // DEV-502: mismatches of direct / neg - the exit code (was 0 also with mismatches)
+
 function sim_show($name, $code, $want) {
+  global $sim_fail;
+  if ($code != $want) $sim_fail++;
   printf("  %-48s %3d  (want %d) %s\n", $name, $code, $want, ($code == $want) ? "OK" : "<--");
   return ($code == $want);
 }
@@ -138,6 +142,7 @@ $app = false;
 $code_ok = false;
 if (!sim_show("POST /api/auth/ext/init + /api/auth/ext/validate", extauth_pair_direct($cfg_domain, $token, $app_label, $app, $code_ok), 200)) exit(1);
 echo "  code " . ($code_ok ? "verified" : "MISMATCH") . "\n";
+if (!$code_ok) $sim_fail++;
 
 echo "Access token (direct)\n";
 $authreq = false;
@@ -155,9 +160,6 @@ sim_show("issued token: GET /api/system/config", $ext_token ? http_transaction("
 
 if ($mode === "neg") {
   echo "Malformed sealed scope (DEV-438 A5)\n";
-  $raw = base64_decode(substr($sealed, 1));
-  $mac = hash_hmac("sha256", $plain, $m, true);
-  $pad0 = openssl_encrypt(str_repeat("x", 15) . "\0", "aes-128-cbc", substr($m, 0, 16), OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING, substr($m, 16, 16));
   $t = false;
   // DEV-499 (D4): a jti is accepted once (A4) - every variant gets its own request (the MAC / padding values depend on the request's session key)
   $fresh = function () use ($cfg_domain, $app) {
@@ -174,3 +176,5 @@ if ($mode === "neg") {
   $r = $fresh(); sim_show("valid again (HEM still fine)", extauth_token_direct($cfg_domain, $app, $r['jti'], extauth_seal($r['plain'], $r['m']), $t), 200);
   sim_show("the same authreply again (DEV-499 A4: jti single use)", extauth_token_direct($cfg_domain, $app, $r['jti'], extauth_seal($r['plain'], $r['m']), $t), 401);
 }
+echo ($sim_fail ? "$sim_fail mismatch(es)" : "all as expected") . "\n";
+exit($sim_fail ? 1 : 0);                                     // DEV-502

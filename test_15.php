@@ -315,6 +315,21 @@ if ( ($r = $t15_req()) === false ) goto print_and_exit;
 $cases[] = array("ext/token, the same authreply again (DEV-499 A4: jti single use)", extauth_token_direct($cfg_domain, $app, $r['jti'], extauth_seal($r['plain'], $r['m']), $t), 200);
 $cases[] = array("ext/token, replayed authreply", extauth_token_direct($cfg_domain, $app, $r['jti'], extauth_seal($r['plain'], $r['m']), $t), 401);
 $cases[] = array("ext/validate, pid 16 B", extauth_pair_direct($cfg_domain, $token_cfg, "T-15 ExtAuth 16", $app16, $code_ok, 16), 400);
+// DEV-502 (T-15.7): a pairing reply with an epk that is not 32 B is refused before the app key is stored (DEV-501 G1 D4) - the same
+//   app then pairs with a valid reply (a stored key would answer 409 already paired)
+$app_e = extauth_new_app();
+foreach (array(30 => 400, 32 => 200) as $epk_len => $want) {
+  $ret_val = false;
+  $post_data = json_encode(array('epk' => base64_encode(sodium_crypto_scalarmult_base(random_bytes(32)))));
+  if ( http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $post_data, $token_cfg) != 200 ) goto print_and_exit;
+  $req = extauth_payload($ret_val['request']);
+  $req['aud'] = base64_encode(substr(base64_decode($req['aud']), 0, $epk_len));   // becomes the epk claim of the reply
+  $app_e['eid'] = base64_decode($ret_val['eid']);
+  $app_e['pid'] = base64_encode(random_bytes(32));
+  $ret_val = false;
+  $post_data = json_encode(array('pid' => $app_e['pid'], 'reply' => extauth_pairing_reply($app_e, $req, "T-15 ExtAuth epk")));
+  $cases[] = array("ext/validate, epk $epk_len B" . (($epk_len == 32) ? ", same app again (not stored before)" : ""), http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/validate", $ret_val, $post_data, $token_cfg), $want);
+}
 if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // b) set result
@@ -367,6 +382,23 @@ $token_upg = helper_authorize($cfg_domain, $cfg_passpharse, "system:upgrade");
 if ($token_upg == false) goto print_and_exit;
 $cases[] = array("upload_fw, name x.txt", raw_https_request($cfg_domain, "POST /api/system/upgrade/upload_fw HTTP/1.1\r\nHost: $cfg_domain\r\nAuthorization: Bearer $token_upg\r\nContent-Disposition: attachment; filename=\"x.txt\"\r\nContent-Length: 10\r\nConnection: close\r\n\r\n0123456789"), 400);
 $cases[] = array("upload_fw, 3 MiB (body not sent)", raw_https_request($cfg_domain, "POST /api/system/upgrade/upload_fw HTTP/1.1\r\nHost: $cfg_domain\r\nAuthorization: Bearer $token_upg\r\nContent-Disposition: attachment; filename=\"fw.bin\"\r\nContent-Length: 3145728\r\nConnection: close\r\n\r\n"), 413);
+// DEV-502 (T-15.9 b): upload_fw while check_fw runs is refused (DEV-501 G6 D.10); the running image passes the check (about 5 s)
+$fw_image = getenv("ENCEDO_FW_IMAGE") ? getenv("ENCEDO_FW_IMAGE") : __DIR__ . "/../encedo_firmware/Firmware/EncedoKey/tmp_signed.bin";
+$post_data = @file_get_contents($fw_image);
+if ( $post_data === false ) echo "    $fw_image not found - upload_fw during check_fw skipped\n";
+else {
+  $ret_val = false;
+  $cases[] = array("upload_fw, signed image", http_transaction("https", "POST", $cfg_domain, "/api/system/upgrade/upload_fw", $ret_val, $post_data, $token_upg, "firmware.bin"), 200);
+  $ret_val = false;
+  $cases[] = array("check_fw, start", http_transaction("https", "GET", $cfg_domain, "/api/system/upgrade/check_fw", $ret_val, $not_used, $token_upg), 201);
+  $cases[] = array("upload_fw during check_fw", raw_https_request($cfg_domain, "POST /api/system/upgrade/upload_fw HTTP/1.1\r\nHost: $cfg_domain\r\nAuthorization: Bearer $token_upg\r\nContent-Disposition: attachment; filename=\"firmware.bin\"\r\nContent-Length: 10\r\nConnection: close\r\n\r\n0123456789"), 409);
+  for ($i = 0; $i < 60; $i++) {
+    usleep(500000);
+    $ret_val = false;
+    if ( ($ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/upgrade/check_fw", $ret_val, $not_used, $token_upg)) != 202 ) break;
+  }
+  $cases[] = array("check_fw, result (the 409 upload did not touch the image)", $ret_stat, 200);
+}
 // c) storage_disk0size: the value read can be written back unchanged; 0 and negative values are refused (DEV-438)
 $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config", $ret_val, $not_used, $token_cfg);
@@ -741,8 +773,25 @@ foreach (array("array, 2nd value matches (keymgmt/list)" => array("/api/keymgmt/
   $cases[] = array($name, http_transaction("https", "GET", $cfg_domain, $v[0], $ret_val, $not_used, $v[1]), $v[2]);
 }
 if ( !check_cases($cases) ) goto print_and_exit;
+// b) DEV-502 (T-15.16 b): system/selftest with system:config runs (200); a second call during the run gets 409 instead of
+//    waiting (DEV-501 G5 D12) - the synchronous part takes about 1.5 s
+$t_self = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
+if ( $t_self == false ) goto print_and_exit;
+$req = "GET /api/system/selftest HTTP/1.1\r\nHost: $cfg_domain\r\nAuthorization: Bearer $t_self\r\n\r\n";
+$sock_a = raw_https_connect($cfg_domain);
+$sock_b = raw_https_connect($cfg_domain);
+if ( ($sock_a == false) || ($sock_b == false) ) goto print_and_exit;
+stream_set_timeout($sock_a, 60);
+fwrite($sock_a, $req);
+usleep(100000);                                               // the first call is inside the test
+$cases = array();
+$cases[] = array("system/selftest during a running one", raw_https_transaction($sock_b, $req), 409);
+$cases[] = array("system/selftest, system:config", raw_https_transaction($sock_a, ""), 200);
+fclose($sock_a);
+fclose($sock_b);
+if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
-// b) set result
+// c) set result
 $test_cfg['subtests'][16] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////

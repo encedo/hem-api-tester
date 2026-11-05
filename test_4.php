@@ -294,6 +294,7 @@ $not_used = false;    //dummy
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $not_used, $token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200 - all good
+if ( !helper_wait_reboot($cfg_domain) ) goto print_and_exit;    // DEV-502: wait for the new boot (the next test only had the 25 s pause of the runner)
 if ( !$fls_ok ) goto print_and_exit;                        // failure state not entered or the request not refused with 409
 // d) set result
 $test_cfg['subtests'][4] = 'OK';                           // mark this subtest as OK

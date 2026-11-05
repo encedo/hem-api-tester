@@ -54,7 +54,7 @@ if ($ret == false) goto print_and_exit;                     // exit on error
 // d) perform REMOTE USER authentication
 // get backend EPK key
 $ret_val = false;
-$ret_stat = http_transaction("https", "GET", "api.encedo.com", "/notify/session", $ret_val, $post_data);
+$ret_stat = http_transaction("https", "GET", "api.encedo.com", "/notify/session", $ret_val, false);   // DEV-502: $post_data was undefined here (a warning since post_data is by value)
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
 $epk = $ret_val['epk'];
@@ -122,7 +122,7 @@ echo "    (backend / app path: the HEM is not called after a deny)\n";
 // a) perform REMOTE USER authentication and expect DENY returned
 // get backend EPK key
 $ret_val = false;
-$ret_stat = http_transaction("https", "GET", "api.encedo.com", "/notify/session", $ret_val, $post_data);
+$ret_stat = http_transaction("https", "GET", "api.encedo.com", "/notify/session", $ret_val, false);   // DEV-502: $post_data was undefined here (a warning since post_data is by value)
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
 $epk = $ret_val['epk'];
@@ -176,7 +176,7 @@ $test_cfg['subtests'][3] = 'ERROR';                         // mark this subtest
 // a) REMOTE USER authentication with a multi-scope request (DEV-436): scope array -> the app gets the values separated by
 //    spaces, approves them -> the token scope is an array and grants both endpoints
 $ret_val = false;
-$ret_stat = http_transaction("https", "GET", "api.encedo.com", "/notify/session", $ret_val, $post_data);
+$ret_stat = http_transaction("https", "GET", "api.encedo.com", "/notify/session", $ret_val, false);   // DEV-502: $post_data was undefined here (a warning since post_data is by value)
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
 $epk = $ret_val['epk'];

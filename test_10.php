@@ -878,7 +878,7 @@ $dummy_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $dummy_val, $token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call FAIL
-sleep(10);  //wait
+if ( !helper_wait_reboot($cfg_domain) ) goto print_and_exit;    // DEV-502: wait for the new boot (was a fixed sleep)
 if ( !$fls_ok ) goto print_and_exit;                        // failure state not entered or the request not refused with 409
 // f) set result
 $test_cfg['subtests'][8] = 'OK';                           // mark this subtest as OK
