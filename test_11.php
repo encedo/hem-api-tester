@@ -527,6 +527,25 @@ foreach($keychain as $item) {
   $msg_test = $ret_val['plaintext'];
   //compare
   if ($msg != $msg_test) goto print_and_exit;    //expected is equal
+  // DEV-503: ChaCha20-Poly1305 (RFC 8439: 12 B nonce, 16 B tag, aad) on an AES256 key; AES128 / AES192 keys are too short -> 400
+  $alg = "CHACHA20-POLY1305";
+  $post_array = array('kid' => $kid, 'msg' => $msg, 'alg' => $alg, 'aad' => $aad);
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/encrypt", $ret_val, json_encode($post_array), $token);
+  if ( $type != "AES256" ) {
+    if ( $ret_stat != 400 ) { echo "ERROR: $alg on $type: HTTP $ret_stat (400 expected)\n"; goto print_and_exit; }
+  } else {
+    if ( ($ret_stat != 200) || (strlen(base64_decode($ret_val['iv'])) != 12) || (strlen(base64_decode($ret_val['tag'])) != 16) || (strlen(base64_decode($ret_val['ciphertext'])) != 100) ) { echo "ERROR: $alg encrypt: HTTP $ret_stat " . json_encode($ret_val) . "\n"; goto print_and_exit; }
+    $dec = array_merge($post_array, array('msg' => $ret_val['ciphertext'], 'iv' => $ret_val['iv'], 'tag' => $ret_val['tag']));
+    $bad_tag = base64_encode(base64_decode($ret_val['tag']) ^ ("\x01" . str_repeat("\0", 15)));
+    foreach (array(array(array(), 200), array(array('tag' => $bad_tag), 406), array(array('aad' => base64_encode("other")), 406),
+                   array(array('iv' => base64_encode(openssl_random_pseudo_bytes(16))), 400), array(array('tag' => null), 400), array(array('iv' => null), 400)) as $v) {
+      $p = array_filter(array_merge($dec, $v[0]), function ($x) { return $x !== null; });
+      $ret_val = false;
+      $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/decrypt", $ret_val, json_encode($p), $token);
+      if ( ($ret_stat != $v[1]) || (($v[1] == 200) && ($ret_val['plaintext'] !== $msg)) ) { echo "ERROR: $alg decrypt " . json_encode($v[0]) . ": HTTP $ret_stat ({$v[1]} expected)\n"; goto print_and_exit; }
+    }
+  }
   $counter++;
 }
 if ($counter != count($keychain)) goto print_and_exit;
@@ -853,6 +872,35 @@ foreach($keychain as $item) {
   $msg_test = $ret_val['plaintext'];
   //compare
   if ($msg != $msg_test) goto print_and_exit;    //expected is equal
+  // DEV-503: the HKDF info of a derived cipher key binds the algorithm - "encedo-encrypt:v1:<alg, lowercase>:" || hkdf_ctx. The key is
+  //   computed here from the raw ECDH secret $z and the ciphertext of the HEM is decrypted locally; for ChaCha20-Poly1305 also the reverse
+  $ctx_raw = openssl_random_pseudo_bytes(8);
+  $salt_raw = openssl_random_pseudo_bytes(16);
+  $plain = openssl_random_pseudo_bytes(77);
+  $aad_raw = openssl_random_pseudo_bytes(20);
+  foreach (array("AES128-CBC" => 16, "AES256-CBC" => 32, "AES256-GCM" => 32, "CHACHA20-POLY1305" => 32) as $alg => $klen) {
+    $key = hash_hkdf('sha512', $z, $klen, "encedo-encrypt:v1:" . strtolower($alg) . ":" . $ctx_raw, $salt_raw);
+    $post_array = array('kid' => $kid, 'pubkey' => $pubkey, 'msg' => base64_encode($plain), 'alg' => $alg, 'hkdf_ctx' => base64_encode($ctx_raw), 'hkdf_salt' => base64_encode($salt_raw));
+    if ( !strstr($alg, "-CBC") ) $post_array['aad'] = base64_encode($aad_raw);
+    $ret_val = false;
+    $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/encrypt", $ret_val, json_encode($post_array), $token);
+    if ( $ret_stat != 200 ) { echo "ERROR: $type $alg pubkey encrypt: HTTP $ret_stat\n"; goto print_and_exit; }
+    $ct = base64_decode($ret_val['ciphertext']);
+    $nonce = base64_decode($ret_val['iv']);
+    $tag = isset($ret_val['tag']) ? base64_decode($ret_val['tag']) : '';
+    if ( $alg == "CHACHA20-POLY1305" ) $local = sodium_crypto_aead_chacha20poly1305_ietf_decrypt($ct . $tag, $aad_raw, $nonce, $key);
+    elseif ( $alg == "AES256-GCM" ) $local = openssl_decrypt($ct, "aes-256-gcm", $key, OPENSSL_RAW_DATA, $nonce, $tag, $aad_raw);
+    else $local = openssl_decrypt($ct, "aes-" . substr($alg, 3, 3) . "-cbc", $key, OPENSSL_RAW_DATA, $nonce);
+    if ( $local !== $plain ) { echo "ERROR: $type $alg: the HEM ciphertext does not decrypt with the key of info \"encedo-encrypt:v1:" . strtolower($alg) . ":\" || hkdf_ctx\n"; goto print_and_exit; }
+  }
+  $key = hash_hkdf('sha512', $z, 32, "encedo-encrypt:v1:chacha20-poly1305:" . $ctx_raw, $salt_raw);
+  $nonce = openssl_random_pseudo_bytes(12);
+  $sealed = sodium_crypto_aead_chacha20poly1305_ietf_encrypt($plain, $aad_raw, $nonce, $key);
+  $post_array = array('kid' => $kid, 'pubkey' => $pubkey, 'alg' => "CHACHA20-POLY1305", 'msg' => base64_encode(substr($sealed, 0, -16)), 'tag' => base64_encode(substr($sealed, -16)),
+                      'iv' => base64_encode($nonce), 'aad' => base64_encode($aad_raw), 'hkdf_ctx' => base64_encode($ctx_raw), 'hkdf_salt' => base64_encode($salt_raw));
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/decrypt", $ret_val, json_encode($post_array), $token);
+  if ( ($ret_stat != 200) || (base64_decode($ret_val['plaintext']) !== $plain) ) { echo "ERROR: $type CHACHA20-POLY1305: sealed locally, the HEM decrypt gives HTTP $ret_stat\n"; goto print_and_exit; }
   //echo "WRAP - EXT_KID\n";
   $msg = base64_encode( openssl_random_pseudo_bytes( 32 ) ); // example random message to wrap (KEK by NIST)
   $post_array = array('kid' => $kid, 'ext_kid' => $kid, 'alg' => "AES128", 'msg' => $msg);
