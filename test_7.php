@@ -62,7 +62,7 @@ if ( intval($ret_val['fls_state']) !== 0) {
   goto print_and_exit;     // exit as well if prereq not fulfill
 }
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
-  $cfg_domain = $ret_val['hostname'];                      
+  $cfg_domain = $ret_val['hostname'];
 }
 // b) detect, get version details etc
 $ret_val = false;
@@ -72,7 +72,7 @@ if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call 
 $test_cfg['hwv'] = $ret_val['hwv'];                         //   or follow on with processing
 $test_cfg['blv'] = @$ret_val['blv'];
 $test_cfg['fwv'] = $ret_val['fwv'];
-$test_cfg['fws'] = $ret_val['fws'];                         // 'fws' a'ka firmware siganture is unique per binary 
+$test_cfg['fws'] = $ret_val['fws'];                         // 'fws' a'ka firmware siganture is unique per binary
 $test_cfg['conf'] = "ENCEDO PPA";
 if ( strstr($ret_val['hwv'], "EPA") ) $test_cfg['conf'] = "ENCEDO EPA";
 if ( strstr($test_cfg['conf'], "EPA") ) goto print_and_exit;    // test not for EPA
@@ -154,7 +154,7 @@ if ( intval($ret_val['fls_state']) !== 0) {
   goto print_and_exit;     // exit as well if prereq not fulfill
 }
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
-  $cfg_domain = $ret_val['hostname'];                      
+  $cfg_domain = $ret_val['hostname'];
 }
 // b) detect, get version details etc
 $ret_val = false;
@@ -164,7 +164,7 @@ if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call 
 $test_cfg['hwv'] = $ret_val['hwv'];                         //   or follow on with processing
 $test_cfg['blv'] = @$ret_val['blv'];
 $test_cfg['fwv'] = $ret_val['fwv'];
-$test_cfg['fws'] = $ret_val['fws'];                         // 'fws' a'ka firmware siganture is unique per binary 
+$test_cfg['fws'] = $ret_val['fws'];                         // 'fws' a'ka firmware siganture is unique per binary
 $test_cfg['conf'] = "ENCEDO PPA";
 if ( strstr($ret_val['hwv'], "EPA") ) $test_cfg['conf'] = "ENCEDO EPA";
 if ( strstr($test_cfg['conf'], "EPA") ) goto print_and_exit;    // test not for EPA
@@ -177,12 +177,12 @@ $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:upgrade");   // 
 if ($token == false) goto print_and_exit;                    // exit on error
 //echo "    Token: $token\n";
 // e) upload new file
-$file_contents = file_get_contents( $filename_hex_path_diagversion ); 
+$file_contents = file_get_contents( $filename_hex_path_diagversion );
 if ($file_contents == false) goto print_and_exit;                    // exit on error
 $post_data = $file_contents;
 $ret_val = false;
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/upgrade/upload_fw", $ret_val, $post_data, $token, "firmware.bin");
-if ($ret_stat == false) goto print_and_exit;                     // exit on error
+if ($ret_stat != 200) goto print_and_exit;                       // expected 200 - file stored (no body)   DEV-499 (D2): was == false (any 4xx/5xx passed)
 //  f) check uploaded file integrity
 $counter = 0;
 do {
@@ -247,7 +247,7 @@ if ( intval($ret_val['fls_state']) !== 0) {
   goto print_and_exit;     // exit as well if prereq not fulfill
 }
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
-  $cfg_domain = $ret_val['hostname'];                      
+  $cfg_domain = $ret_val['hostname'];
 }
 // b) detect, get version details etc
 $ret_val = false;
@@ -258,7 +258,7 @@ $test_cfg['hwv'] = $ret_val['hwv'];                         //   or follow on wi
 $test_cfg['blv'] = @$ret_val['blv'];
 $test_cfg['fwv'] = $ret_val['fwv'];
 $test_cfg['uis'] = $ret_val['uis'];
-$test_cfg['fws'] = $ret_val['fws'];                         // 'fws' a'ka firmware siganture is unique per binary 
+$test_cfg['fws'] = $ret_val['fws'];                         // 'fws' a'ka firmware siganture is unique per binary
 $test_cfg['conf'] = "ENCEDO PPA";
 if ( strstr($ret_val['hwv'], "EPA") ) $test_cfg['conf'] = "ENCEDO EPA";
 if ( strstr($test_cfg['conf'], "EPA") ) goto print_and_exit;    // test not for EPA
@@ -271,12 +271,12 @@ $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:upgrade");   // 
 if ($token == false) goto print_and_exit;                    // exit on error
 //echo "    Token: $token\n";
 // e) upload new file
-$file_contents = file_get_contents($dahsboard_path); 
+$file_contents = file_get_contents($dahsboard_path);
 if ($file_contents == false) goto print_and_exit;                    // exit on error
 $post_data = $file_contents;
 $ret_val = false;
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/upgrade/upload_ui", $ret_val, $post_data, $token, "webroot.tar");
-if ($ret_stat == false) goto print_and_exit;                     // exit on error
+if ($ret_stat != 200) goto print_and_exit;                       // expected 200 - file stored (no body)   DEV-499 (D2): was == false (any 4xx/5xx passed)
 //  f) check uploaded file integrity
 $counter = 0;
 do {
@@ -343,7 +343,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 print_and_exit:
   $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
-  print_result( $test_cfg );  
+  print_result( $test_cfg );
   die;
 
 /////////////////////////////////////////////////////////////////////

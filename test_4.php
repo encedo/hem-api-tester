@@ -35,7 +35,7 @@ if ( intval($ret_val['fls_state']) !== 0) {
   goto print_and_exit;     // exit as well if prereq not fulfill
 }
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
-  $cfg_domain = $ret_val['hostname'];                      
+  $cfg_domain = $ret_val['hostname'];
 }
 // b) detect, get version details etc
 $ret_val = false;
@@ -80,6 +80,59 @@ $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config", 
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200
 if ($last_update_ts >= $ret_val['uts']) goto print_and_exit;  //'uts' update as changes applied correctly
+// d2) policy (DEV-447): set once at personalisation (T-2) - readable in GET config; POST config with it -> 400, nothing applied
+if ( @$ret_val['policy'] !== array("raw_ecdh_enabled", "pubkey_in_search", "pubkey_in_list") ) { echo "    GET config policy: " . json_encode(@$ret_val['policy']) . "\n"; goto print_and_exit; }
+$t4_user = $ret_val['user'];
+foreach (array(array('policy' => array()), array('policy' => array("raw_ecdh_enabled"), 'user' => $t4_user . "-x")) as $bad) {
+  $r = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $r, json_encode($bad), $token);
+  if ( $ret_stat != 400 ) { echo "    POST config " . json_encode($bad) . ": HTTP $ret_stat, expected 400\n"; goto print_and_exit; }
+}
+$r = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config", $r, $not_used, $token);
+if ( ($ret_stat != 200) || ($r['user'] !== $t4_user) ) { echo "    POST config with policy changed 'user'\n"; goto print_and_exit; }
+// e) CORS origin change (DEV-426, DEV-438 N8): a list of allowed origins - each entry compared as a whole and case-insensitively,
+//    "*.domain" = one label more; a request from an origin not on the list gets 412, a request without Origin (this tester)
+//    is not affected; the previous value is restored even if a check fails
+$cors_old = $ret_val['origin'];                             // from the re-read config above
+$cors_list = "Cors-X.Hem-Api-Tester.Encedo.com other.example.com *.wild.example.com";
+$cors_cases = array(
+  array("https://cors-x.hem-api-tester.encedo.com", 204),   // on the list (the list entry has capitals)
+  array("https://cors-y.hem-api-tester.encedo.com", 412),   // not on the list
+  array("https://other.example.co", 412),                   // only the beginning of an entry
+  array("https://a.wild.example.com", 204),                 // *.wild.example.com
+  array("https://a.b.wild.example.com", 412),               // two labels more than *.wild.example.com
+);
+$cors_ok = false;
+$ret_val = false;
+$post_data = json_encode( array( 'origin' => $cors_list) );
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token);
+if ( ($ret_stat == 200) && ($ret_val['updated'] == true) ) {
+  $cors_ok = true;
+  foreach ($cors_cases as $c) {
+    $hdrs = false;
+    $stat = raw_https_request($cfg_domain, "OPTIONS /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nOrigin: " . $c[0] . "\r\nAccess-Control-Request-Method: GET\r\nConnection: close\r\n\r\n", $hdrs);
+    if ( $cfg_debug ) var_dump( $c[0], $stat, $hdrs );
+    if ( ($stat != $c[1]) || (($c[1] == 204) && (@$hdrs['access-control-allow-origin'] !== $c[0])) ) {
+      echo "    CORS preflight from " . $c[0] . ": HTTP $stat, expected " . $c[1] . "\n";
+      $cors_ok = false;
+    }
+  }
+  $stat = raw_https_request($cfg_domain, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nOrigin: https://cors-y.hem-api-tester.encedo.com\r\nConnection: close\r\n\r\n");
+  if ( $stat != 412 ) { echo "    GET from an origin not on the list: HTTP $stat, expected 412\n"; $cors_ok = false; }
+  $ret_val = false;
+  $stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val);     // no Origin header
+  if ( $stat != 200 ) { echo "    GET without Origin: HTTP $stat, expected 200\n"; $cors_ok = false; }
+}
+// restore the previous origin (also after a failed check)
+$ret_val = false;
+$post_data = json_encode( array( 'origin' => $cors_old) );
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token);
+if ( $ret_stat != 200 ) goto print_and_exit;
+$ret_val = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config", $ret_val, $not_used, $token);
+if ( ($ret_stat != 200) || ($ret_val['origin'] !== $cors_old) ) goto print_and_exit;
+if ( !$cors_ok ) goto print_and_exit;
 // f) set result
 $test_cfg['subtests'][1] = 'OK';                            // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
@@ -115,7 +168,7 @@ $post_data = json_encode( array( 'useR' => $new_user_name) ); //spot the typo
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200
-if ( $ret_val['updated'] == true) goto print_and_exit;      //updated should be false - firmware is looking up for know arguments only
+if ( @$ret_val['updated'] !== false ) goto print_and_exit;  //updated must be false - firmware is looking up for know arguments only; DEV-502 (T-4.2): a missing field passed
 //re-read TOE configuration to check no changes made
 $ret_val = false;
 $not_used = false;    //dummy
@@ -145,8 +198,8 @@ if ($token_correct == false) goto print_and_exit;                    // exit on 
 //$token_details = json_decode(base64_decode($token_parts[1]), true);
 //echo "    scope=" . $token_details['scope'] ." role=" . $token_details['sub'] . " expire=" . $token_details['exp'] . "\n";
 //token with invalid scope
-$token_wrong = helper_authorize($cfg_domain, $cfg_passpharse, "system:reboot");
-if ($token_correct == false) goto print_and_exit;                    // exit on error
+$token_wrong = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");   // DEV-436: a valid scope of another endpoint ("system:reboot" is not a scope - 400 at auth/token)
+if ($token_wrong == false) goto print_and_exit;                    // exit on error
 //echo "  USER token: $token_wrong\n";
 //$token_parts = explode(".", $token_wrong);
 //$token_details = json_decode(base64_decode($token_parts[1]), true);
@@ -181,7 +234,7 @@ if ( strstr($test_cfg['conf'], "PPA") ) {
   $not_used = '{"crt":"not_importand","genuine":"not_importand"}';
   $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config/provisioning", $ret_val, $not_used, $token_correct);
   if ( $cfg_debug ) var_dump( $ret_val );
-  if ( $ret_stat != 403 ) goto print_and_exit;                //expected is 403 - device provisioned
+  if ( $ret_stat != 409 ) goto print_and_exit;                //expected is 409 - device provisioned (state)
 }
 // d) set result
 $test_cfg['subtests'][3] = 'OK';                           // mark this subtest as OK
@@ -196,10 +249,11 @@ TEST4:
 echo "  subtest-4\n";
 if ($diag_mode == false) {
   echo "    No DIAG mode, subtest will be skipped.\n";
-  goto print_and_exit;
+  $test_cfg['subtests'][4] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
+  goto test_summary;
 }
 $test_cfg['subtests'][4] = 'ERROR';                       // mark this subtest default as ERROR - initialization as subtest is ongoing
-// a) performe correct user authentication 
+// a) performe correct user authentication
 $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
 if ($token == false) goto print_and_exit;                    // exit on error
 //echo "  USER token: $token\n";
@@ -217,22 +271,31 @@ $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/diag/break_temp", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200 - all good, FLS.1 triggered
-sleep(3);
+// the self-test sets the failure state asynchronously - poll up to 10 s; the checks are evaluated after the reboot
+$fls_ok = false;
+for ($i = 0; $i < 10; $i++) {
+  sleep(1);
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val);
+  if ( ($ret_stat == 200) && ($ret_val['fls_state'] != 0) ) { $fls_ok = true; break; }
+}
 //d) re-read config - should failed
-if ( strstr($test_cfg['conf'], "PPA") ) {
+if ( $fls_ok && strstr($test_cfg['conf'], "PPA") ) {
   $ret_val = false;
   $not_used = false;    //dummy
   $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config/attestation", $ret_val, $not_used, $token);
   //var_dump($ret_stat);
   if ( $cfg_debug ) var_dump( $ret_val );
-  if ( $ret_stat != 409 ) goto print_and_exit;                //expected is 409 - failer state
+  if ( $ret_stat != 409 ) $fls_ok = false;                    //expected is 409 - failer state
 }
-//e) reboot TOE to clear failer state - only possible way
+//e) reboot TOE to clear failer state - only possible way; always, so a failed check does not leave the device in FLS
 $ret_val = false;
 $not_used = false;    //dummy
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $not_used, $token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200 - all good
+if ( !helper_wait_reboot($cfg_domain) ) goto print_and_exit;    // DEV-502: wait for the new boot (the next test only had the 25 s pause of the runner)
+if ( !$fls_ok ) goto print_and_exit;                        // failure state not entered or the request not refused with 409
 // d) set result
 $test_cfg['subtests'][4] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
@@ -244,11 +307,12 @@ $test_cfg['subtests'][4] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Test summary      ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+test_summary:
 // if execution reach this point - all test are passed
 $check_passed = 0;
 $check_failed = 0;
 foreach($test_cfg['subtests'] as $no => $val) {
-  if ($val === 'OK') $check_passed++;
+  if (($val === 'OK') || ($val === 'SKIPPED (no DIAG)')) $check_passed++;   // a DIAG subtest skipped on a build without DIAG is not a failure
   else $check_failed++;
 }
 if ($check_failed == 0) $test_cfg['result'] = 'PASS';
@@ -260,7 +324,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 print_and_exit:
   $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
-  print_result( $test_cfg );  
+  print_result( $test_cfg );
   die;
 
 /////////////////////////////////////////////////////////////////////

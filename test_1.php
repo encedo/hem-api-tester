@@ -7,7 +7,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-1";
 $test_descr = "Check TOE basic functions";
-$test_subtest_cnt = 5;
+$test_subtest_cnt = 6;
 
 
 // initialize the execution env
@@ -34,6 +34,10 @@ $test_cfg['blv'] = @$ret_val['blv'];
 $test_cfg['fwv'] = $ret_val['fwv'];
 $test_cfg['conf'] = "ENCEDO PPA";
 if ( strstr($ret_val['hwv'], "EPA") ) $test_cfg['conf'] = "ENCEDO EPA";
+// DEV-469: the release CID of the application / bootloader (released builds only) is a CIDv1 in base32
+foreach (array('fwc', 'blc') as $f) {
+  if ( isset($ret_val[$f]) && !preg_match('/^b[a-z2-7]{58}$/', $ret_val[$f]) ) { echo "ERROR: $f is not a CIDv1 base32: " . $ret_val[$f] . "\n"; goto print_and_exit; }
+}
 // c) check status - prereq: uninitialised TOE
 $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);
@@ -142,16 +146,16 @@ $test_cfg['subtests'][4] = 'OK';                           // mark this subtest 
 TEST5:
 echo "  subtest-5\n";
 $test_cfg['subtests'][5] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
-// a) call TOE /checkin API with malformated JSON string 
+// a) call TOE /checkin API with malformated JSON string
 $post_data = '{"checked":"somedata"';                       // malformated JSON string - missing closing '}'
 $ret_val = false;
 $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/checkin", $ret_val, $post_data);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 400 ) goto print_and_exit;               // expected 400 - "Bad Request"
-// b) call TOE /checkin API with too long JSON string 
+// b) call TOE /checkin API with too long JSON string
 $post_data = '{"checked":"somedata';                        //JSON opening
 $y = 7300 - (strlen($post_data) + 2);                       // max POSTed body size is 7300bytes (5x1460 a'ka 5*MTU)
-for ($x=0; $x < $y+1; $x++) 
+for ($x=0; $x < $y+1; $x++)
    $post_data = $post_data . chr(rand(65, 90));             // random chars 'A' - 'Z'
 $post_data = $post_data . '"}';                             // closing - it is a correct JSON but way too long
 $ret_val = false;                                           // post_data string is 1bytes too long now
@@ -160,6 +164,84 @@ if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 413 ) goto print_and_exit;               // expected 400 - "Bad Request"
 // c) set result
 $test_cfg['subtests'][5] = 'OK';                           // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 6        ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST6:
+echo "  subtest-6\n";
+$test_cfg['subtests'][6] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) security headers on an API response (DEV-426): nosniff, no-store, no Server/X-Powered-By, X-Request-ID echoed
+$req_id = "t1-6-" . bin2hex( openssl_random_pseudo_bytes( 4 ) );
+$hdrs = false;
+$ret_stat = raw_https_request($cfg_domain, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nX-Request-ID: $req_id\r\nConnection: close\r\n\r\n", $hdrs);
+if ( $cfg_debug ) var_dump( $hdrs );
+if ( $ret_stat != 200 ) goto print_and_exit;               // exit on API call FAIL
+if ( @$hdrs['x-content-type-options'] !== "nosniff" ) goto print_and_exit;
+if ( strpos(@$hdrs['cache-control'], "no-store") === false ) goto print_and_exit;
+if ( isset($hdrs['server']) || isset($hdrs['x-powered-by']) ) goto print_and_exit;   // FW version must not leak
+if ( @$hdrs['x-request-id'] !== $req_id ) goto print_and_exit;
+// b) 401 carries WWW-Authenticate: Bearer (DEV-426)
+$hdrs = false;
+$ret_stat = raw_https_request($cfg_domain, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nAuthorization: Bearer junk\r\nConnection: close\r\n\r\n", $hdrs);
+if ( $cfg_debug ) var_dump( $hdrs );
+if ( $ret_stat != 401 ) goto print_and_exit;               // expected 401 - invalid token
+if ( strpos(@$hdrs['www-authenticate'], "Bearer") !== 0 ) goto print_and_exit;
+// c) header names are case-insensitive (DEV-430): lowercase 'authorization' must be seen as a token (was ignored - 200)
+$ret_stat = raw_https_request($cfg_domain, "GET /api/system/status HTTP/1.1\r\nhost: $cfg_domain\r\nauthorization: Bearer junk\r\nconnection: close\r\n\r\n");
+if ( $ret_stat != 401 ) goto print_and_exit;               // expected 401 - invalid token
+// d) lowercase 'content-type'/'content-length' on POST (DEV-430): malformed JSON must reach the API (was 411)
+$post_data = '{"checked":"somedata"';                       // malformated JSON string - missing closing '}', as in subtest 5
+$ret_stat = raw_https_request($cfg_domain, "POST /api/system/checkin HTTP/1.1\r\nhost: $cfg_domain\r\ncontent-type: application/json\r\ncontent-length: " . strlen($post_data) . "\r\nconnection: close\r\n\r\n" . $post_data);
+if ( $ret_stat != 400 ) goto print_and_exit;               // expected 400 - "Bad Request" (JSON parsed and rejected)
+// e) Content-Length that is not a number (DEV-430) - DEV-499 (D2): a valid ext/init body without a token gets 409 / 401 from the handler
+//    (control request), so 400 can only come from the Content-Length check (was: the malformed JSON of step d, which gives 400 by itself); the connection must be closed
+$post_data = '{"epk":"SfxY+3RupkwK82cpOO+30VHyPMm0LAlYT+WeNtpIx2A="}';    // valid body, as in T-3
+$ret_stat = raw_https_request($cfg_domain, "POST /api/auth/ext/init HTTP/1.1\r\nHost: $cfg_domain\r\nContent-Type: application/json\r\nContent-Length: " . strlen($post_data) . "\r\nConnection: close\r\n\r\n" . $post_data);
+if ( ($ret_stat != 409) && ($ret_stat != 401) ) goto print_and_exit;   // expected 409 (not initialised) or 401 (no token) - control
+$hdrs = false;
+$ret_stat = raw_https_request($cfg_domain, "POST /api/auth/ext/init HTTP/1.1\r\nHost: $cfg_domain\r\nContent-Type: application/json\r\nContent-Length: " . strlen($post_data) . "abc\r\nConnection: keep-alive\r\n\r\n" . $post_data, $hdrs);
+if ( $ret_stat != 400 ) goto print_and_exit;               // expected 400 - "Bad Request" (Content-Length not a number)
+if ( strcasecmp(@$hdrs['connection'], "close") != 0 ) goto print_and_exit;   // expected close, also when keep-alive was asked
+// f) CORS preflight with Private Network Access request (DEV-426); TOE config 'origin' is "*" (default, also after T-2)
+$origin = "https://hem-api-tester.encedo.com";
+$hdrs = false;
+$ret_stat = raw_https_request($cfg_domain, "OPTIONS /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nOrigin: $origin\r\nAccess-Control-Request-Method: POST\r\nAccess-Control-Request-Headers: content-type,authorization\r\nAccess-Control-Request-Private-Network: true\r\nConnection: close\r\n\r\n", $hdrs);
+if ( $cfg_debug ) var_dump( $hdrs );
+if ( $ret_stat != 204 ) goto print_and_exit;               // expected 204 - preflight accepted
+if ( @$hdrs['access-control-allow-origin'] !== $origin ) goto print_and_exit;   // exact origin echoed, never "*"
+if ( strpos(@$hdrs['vary'], "Origin") === false ) goto print_and_exit;
+if ( isset($hdrs['access-control-allow-credentials']) ) goto print_and_exit;   // Bearer token API, no cookies
+if ( strpos(@$hdrs['access-control-allow-methods'], "POST") === false ) goto print_and_exit;
+if ( stripos(@$hdrs['access-control-allow-headers'], "Authorization") === false ) goto print_and_exit;
+if ( @$hdrs['x-content-type-options'] !== "nosniff" ) goto print_and_exit;
+if ( $test_cfg['conf'] == "ENCEDO PPA" ) {
+  if ( @$hdrs['access-control-allow-private-network'] !== "true" ) goto print_and_exit;   // PNA only on PPA (local device)
+  if ( @$hdrs['private-network-access-name'] !== "encedo-ppa" ) goto print_and_exit;
+} else {
+  if ( isset($hdrs['access-control-allow-private-network']) ) goto print_and_exit;     // never on EPA
+}
+// g) preflight without the PNA request header - no PNA answer
+$hdrs = false;
+$ret_stat = raw_https_request($cfg_domain, "OPTIONS /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nOrigin: $origin\r\nAccess-Control-Request-Method: GET\r\nConnection: close\r\n\r\n", $hdrs);
+if ( $cfg_debug ) var_dump( $hdrs );
+if ( $ret_stat != 204 ) goto print_and_exit;
+if ( isset($hdrs['access-control-allow-private-network']) ) goto print_and_exit;     // only when asked
+// h) keep-alive (DEV-430): two requests on one connection
+$sock = raw_https_connect($cfg_domain);
+if ( $sock == false ) goto print_and_exit;
+$hdrs = false;
+$ret_stat = raw_https_transaction($sock, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nConnection: keep-alive\r\n\r\n", $hdrs);
+if ( ($ret_stat != 200) || (strcasecmp(@$hdrs['connection'], "keep-alive") != 0) ) { fclose($sock); goto print_and_exit; }
+$ret_stat = raw_https_transaction($sock, "GET /api/system/version HTTP/1.1\r\nHost: $cfg_domain\r\nConnection: close\r\n\r\n");
+fclose($sock);
+if ( $ret_stat != 200 ) goto print_and_exit;               // second request on the same connection must be served
+// i) set result
+$test_cfg['subtests'][6] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
@@ -184,7 +266,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 print_and_exit:
   $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
-  print_result( $test_cfg );  
+  print_result( $test_cfg );
   die;
 
 /////////////////////////////////////////////////////////////////////

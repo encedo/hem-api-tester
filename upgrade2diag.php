@@ -20,7 +20,7 @@ if ($arg != 1 && $arg != 2) {
   exit;
 }
 if ($arg == 1) {
-  $filename_hex_path = $filename_hex_path_official;	
+  $filename_hex_path = $filename_hex_path_official;
 } else {
   $filename_hex_path = $filename_hex_path_diagversion;
 }
@@ -38,7 +38,7 @@ if ( intval($ret_val['fls_state']) !== 0) {
   goto print_and_exit;     // exit as well if prereq not fulfill
 }
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
-  $cfg_domain = $ret_val['hostname'];                      
+  $cfg_domain = $ret_val['hostname'];
 }
 $status = $ret_val;
 // b) detect, get version details etc
@@ -49,7 +49,7 @@ if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call 
 $test_cfg['hwv'] = $ret_val['hwv'];                         //   or follow on with processing
 $test_cfg['blv'] = @$ret_val['blv'];
 $test_cfg['fwv'] = $ret_val['fwv'];
-$test_cfg['fws'] = $ret_val['fws'];                         // 'fws' a'ka firmware siganture is unique per binary 
+$test_cfg['fws'] = $ret_val['fws'];                         // 'fws' a'ka firmware siganture is unique per binary
 $test_cfg['conf'] = "ENCEDO PPA";
 if ( strstr($ret_val['hwv'], "EPA") ) $test_cfg['conf'] = "ENCEDO EPA";
 if ( strstr($test_cfg['conf'], "EPA") ) {
@@ -66,8 +66,8 @@ if ( !isset($status['inited']) ) {
   if ($token == false) goto print_and_exit;                    // exit on error
   //echo "    Token: $token\n";
 } else {
-	$token = false;
-echo "not inited\n";	
+  $token = false;
+echo "not inited\n";
 }
 
 // e) enable USBMODE upgrade procedure
