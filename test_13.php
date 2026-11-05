@@ -1,6 +1,7 @@
 <?php
 
 include "libs/lib.php";
+include "libs/hpke.php";   // DEV-503: PoP hpke (export-only HPKE)
 include "config.php";
 
 
@@ -169,6 +170,18 @@ $t13_matrix = array(
   "MLKEM512"          => array("MLKEM512",   "",           array("kem"),         array("MLKEM")),
   "MLKEM768"          => array("MLKEM768",   "",           array("kem"),         array("MLKEM")),
   "MLKEM1024"         => array("MLKEM1024",  "",           array("kem"),         array("MLKEM")),
+  "SECP256R1-HPKE"    => array("SECP256R1",  "HPKE",       array("hpke"),        array("HPKE")),            // DEV-503: HPKE-only key pairs - PoP hpke only
+  "SECP384R1-HPKE"    => array("SECP384R1",  "HPKE",       array("hpke"),        array("HPKE")),
+  "SECP521R1-HPKE"    => array("SECP521R1",  "HPKE",       array("hpke"),        array("HPKE")),
+  "CURVE25519-HPKE"   => array("CURVE25519", "HPKE",       array("hpke"),        array("HPKE")),
+  "CURVE448-HPKE"     => array("CURVE448",   "HPKE",       array("hpke"),        array("HPKE")),
+  "MLKEM512-HPKE"     => array("MLKEM512",   "HPKE",       array("hpke"),        array("HPKE", "MLKEM")),
+  "MLKEM768-HPKE"     => array("MLKEM768",   "HPKE",       array("hpke"),        array("HPKE", "MLKEM")),
+  "MLKEM1024-HPKE"    => array("MLKEM1024",  "HPKE",       array("hpke"),        array("HPKE", "MLKEM")),
+);
+$t13_hpke = array(  // DEV-503: HEM type => HPKE KEM id and the default KDF of the KEM (the PoP uses it)
+  "SECP256R1" => array(0x0010, 1), "SECP384R1" => array(0x0011, 2), "SECP521R1" => array(0x0012, 3), "CURVE25519" => array(0x0020, 1), "CURVE448" => array(0x0021, 3),
+  "MLKEM512" => array(0x0040, 1), "MLKEM768" => array(0x0041, 1), "MLKEM1024" => array(0x0042, 3),
 );
 $t13_symmetric = array("SHA2-256" => "HMAC", "SHA2-384" => "HMAC", "SHA2-512" => "HMAC", "SHA3-256" => "HMAC", "SHA3-384" => "HMAC", "SHA3-512" => "HMAC",
                        "AES128" => "AES", "AES192" => "AES", "AES256" => "AES");
@@ -225,6 +238,13 @@ function t13_encap($type, $pub) {   // ML-KEM encapsulation (OpenSSL CLI): retur
   $f_ct = t13_tmp(""); $f_ss = t13_tmp("");
   if ( !t13_ossl(array("pkeyutl", "-encap", "-pubin", "-inkey", t13_tmp(t13_pem_pub($type, $pub)), "-out", $f_ct, "-secret", $f_ss)) ) return false;
   return array(file_get_contents($f_ct), file_get_contents($f_ss));
+}
+
+function t13_hpke_pub($type, $raw) {   // DEV-503: keymgmt/get pubkey -> HPKE SerializePublicKey (NIST compressed -> 0x04 || X || Y)
+  global $t13_ec;
+  if (!isset($t13_ec[$type])) return $raw;
+  $d = openssl_pkey_get_details(openssl_pkey_get_public(t13_pem_pub($type, $raw)));
+  return "\x04" . str_pad($d['ec']['x'], $t13_ec[$type][1], "\0", STR_PAD_LEFT) . str_pad($d['ec']['y'], $t13_ec[$type][1], "\0", STR_PAD_LEFT);
 }
 
 function t13_key_token($domain, $password, $kid) { return helper_authorize($domain, $password, "keymgmt:use:$kid"); }
@@ -446,6 +466,11 @@ foreach ($t13_matrix as $name => $m) {
     $req = array('nonce' => base64_encode($nonce_raw), 'aud' => $aud, 'kid' => $kid);
     if ($method == "sig") {
       $req['pop_args'] = new stdClass();
+    } else if ($method == "hpke") {   // DEV-503: verifier = HPKE sender, export-only: info = prefix | aud | pk (HPKE form) | nonce, Export("pop", 32)
+      $hpk = t13_hpke_pub($type, $pub);
+      $e = hpke_export_s($t13_hpke[$type][0], $t13_hpke[$type][1], $hpk, t13_cn("encedo-attest-pop:v1:hpke") . t13_cn($aud) . t13_cn($hpk) . t13_cn($nonce_raw), "pop", 32);
+      if ($e === false) { echo "ERROR: local HPKE export for $name (OpenSSL >= 3.5 CLI needed)\n"; goto print_and_exit; }
+      $req['pop_args'] = array('enc' => base64_encode($e['enc']));
     } else if ($method == "ecdh") {
       $e = t13_eph($type, $pub);
       if ($e === false) { echo "ERROR: local ephemeral key for $name\n"; goto print_and_exit; }
@@ -463,6 +488,8 @@ foreach ($t13_matrix as $name => $m) {
       if ( !t13_sig_ok($type, $pub, $msg, base64_decode(@$body['pop']['signature'])) ) { echo "ERROR: PoP sig $name: signature does not verify\n"; goto print_and_exit; }
     } else if ($method == "ecdh") {
       if ( base64_decode(@$body['pop']['mac']) !== t13_pop_mac("encedo-attest-pop:v1:ecdh", $e[1], $aud, $nonce_raw, $pub, $e[0]) ) { echo "ERROR: PoP ECDH $name: mac differs\n"; goto print_and_exit; }
+    } else if ($method == "hpke") {
+      if ( base64_decode(@$body['pop']['export']) !== $e['secret'] ) { echo "ERROR: PoP HPKE $name: export differs\n"; goto print_and_exit; }
     } else {
       if ( base64_decode(@$body['pop']['mac']) !== t13_pop_mac("encedo-attest-pop:v1:kem", $e[1], $aud, $nonce_raw, $pub, hash('sha256', $e[0], true)) ) { echo "ERROR: PoP KEM $name: mac differs\n"; goto print_and_exit; }
     }
@@ -484,7 +511,8 @@ $test_cfg['subtests'][5] = 'ERROR';                         // mark this subtest
 if ( !isset($keys) ) goto print_and_exit;                   // keys from subtest 3
 // a) strict PoP: pop_args that do not fit the key -> 400, never a token without pop
 $x25519_pub = base64_encode(sodium_crypto_scalarmult_base(openssl_random_pseudo_bytes(32)));
-$args = array("sig" => new stdClass(), "ecdh" => array('verifier_eph_pub' => $x25519_pub), "kem" => array('ciphertext' => base64_encode(str_repeat("c", 1088))));
+$args = array("sig" => new stdClass(), "ecdh" => array('verifier_eph_pub' => $x25519_pub), "kem" => array('ciphertext' => base64_encode(str_repeat("c", 1088))),
+              "hpke" => array('enc' => $x25519_pub));   // DEV-503: enc on a key without the HPKE flag, sig / ecdh / kem on an HPKE key -> 400
 $cases = array();
 foreach ($t13_matrix as $name => $m) {
   foreach ($args as $method => $a) if ( !in_array($method, $m[2]) ) $cases[] = array($keys[$name][0], $a, "$name: $method");
@@ -494,6 +522,8 @@ $cases[] = array($keys["SECP256R1-ECDH"][0], array('verifier_eph_pub' => base64_
 $cases[] = array($keys["CURVE448"][0], array('verifier_eph_pub' => $x25519_pub), "CURVE448: eph pub 32 B (56 B expected)");
 $cases[] = array($keys["MLKEM768"][0], array('ciphertext' => base64_encode(str_repeat("c", 1087))), "MLKEM768: ciphertext 1087 B");
 $cases[] = array($keys["MLKEM512"][0], array('ciphertext' => base64_encode(str_repeat("c", 1088))), "MLKEM512: ciphertext 1088 B (768 expected)");
+$cases[] = array($keys["CURVE25519-HPKE"][0], array('enc' => base64_encode(str_repeat("e", 31))), "CURVE25519-HPKE: enc 31 B");   // DEV-503
+$cases[] = array($keys["MLKEM768-HPKE"][0], array('enc' => base64_encode(str_repeat("e", 1120))), "MLKEM768-HPKE: enc 1120 B (1088 expected)");
 foreach ($imported as $from => $k) $cases[] = array($k[0], new stdClass(), "public key only ($from): signature PoP");
 foreach ($sym as $type => $k) $cases[] = array($k[0], new stdClass(), "symmetric $type: PoP");
 foreach ($cases as $c) {
