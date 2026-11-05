@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-13";
 $test_descr = "Attestation: JWT, key block, proof of possession";
-$test_subtest_cnt = 7;
+$test_subtest_cnt = 8;   // DEV-502: 8 = attest.encedo.com end to end
 
 
 // initialize the execution env
@@ -651,6 +651,71 @@ if ( isset($ret_val['csr']) ) {
 }
 // c) set result
 $test_cfg['subtests'][7] = 'OK';                            // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 8        ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST8:
+echo "  subtest-8\n";
+$test_cfg['subtests'][8] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
+// DEV-502: end to end through the public verifier https://attest.encedo.com (DEV-498, stateless): POST /v1/validate {jwt, crt} -> status
+//   valid / valid_unverified / invalid (+ expired), GET /v1/skid/<sha1 hex of 04||x||y> -> {known}, GET /v1/pki -> the Encedo CA certificates
+$t13_av = "attest.encedo.com";
+$token_any = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");
+if ($token_any == false) goto print_and_exit;
+$not_used = false;
+// a) device certificate of the HEM
+$ret_val = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config/attestation", $ret_val, $not_used, $token_any);
+if ( ($ret_stat != 200) || !isset($ret_val['crt']) ) { echo "ERROR: GET attestation: HTTP $ret_stat, no crt\n"; goto print_and_exit; }
+$t13_crt = $ret_val['crt'];
+// b) tokens: the device, a key with a signature PoP (ECDSA, EdDSA, ML-DSA) - all valid with the certificate
+$t13_jwts = array();
+$nonce_raw = openssl_random_pseudo_bytes(32);
+if ( (t13_request($cfg_domain, $token_any, array('nonce' => base64_encode($nonce_raw), 'aud' => $aud), $jwt) != 200) ) { echo "ERROR: device attestation for the verifier\n"; goto print_and_exit; }
+$t13_jwts["device"] = $jwt;
+foreach (array("SECP256R1-ExDSA", "ED25519", "MLDSA44") as $name) {
+  if ( !isset($keys[$name]) ) { echo "ERROR: key $name from subtest 3 missing\n"; goto print_and_exit; }
+  $req = array('nonce' => base64_encode(openssl_random_pseudo_bytes(32)), 'aud' => $aud, 'kid' => $keys[$name][0], 'pop_args' => new stdClass());
+  if ( ($ret_stat = t13_request($cfg_domain, t13_key_token($cfg_domain, $cfg_passpharse, $keys[$name][0]), $req, $jwt)) != 200 ) { echo "ERROR: PoP sig $name for the verifier: HTTP $ret_stat\n"; goto print_and_exit; }
+  $t13_jwts["PoP $name"] = $jwt;
+}
+foreach ($t13_jwts as $name => $jwt) {
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $t13_av, "/v1/validate", $ret_val, json_encode(array('jwt' => $jwt, 'crt' => $t13_crt), JSON_UNESCAPED_SLASHES));
+  if ( ($ret_stat != 200) || (@$ret_val['status'] !== "valid") || (@$ret_val['expired'] !== false) ) { echo "ERROR: $t13_av $name with crt: HTTP $ret_stat " . json_encode($ret_val) . " (valid, not expired expected)\n"; goto print_and_exit; }
+}
+// c) without the certificate: the SKID index decides - valid or valid_unverified, never invalid
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $t13_av, "/v1/validate", $ret_val, json_encode(array('jwt' => $t13_jwts["device"]), JSON_UNESCAPED_SLASHES));
+if ( ($ret_stat != 200) || !in_array(@$ret_val['status'], array("valid", "valid_unverified"), true) ) { echo "ERROR: $t13_av device without crt: HTTP $ret_stat " . json_encode($ret_val) . "\n"; goto print_and_exit; }
+$t13_av_known = ($ret_val['status'] === "valid");
+// d) a changed token (signature byte, body claim) is invalid
+$p = explode('.', $t13_jwts["device"]);
+$sig = t13_b64url_dec($p[2]); $sig[10] = chr(ord($sig[10]) ^ 1);
+$body = json_decode(t13_b64url_dec($p[1]), true); $body['aud'] = $aud . "-x";
+foreach (array("signature" => $p[0] . "." . $p[1] . "." . rtrim(strtr(base64_encode($sig), '+/', '-_'), '='),
+               "body" => $p[0] . "." . rtrim(strtr(base64_encode(json_encode($body, JSON_UNESCAPED_SLASHES)), '+/', '-_'), '=') . "." . $p[2]) as $what => $jwt) {
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $t13_av, "/v1/validate", $ret_val, json_encode(array('jwt' => $jwt, 'crt' => $t13_crt), JSON_UNESCAPED_SLASHES));
+  if ( ($ret_stat != 200) || (@$ret_val['status'] !== "invalid") ) { echo "ERROR: $t13_av changed $what: HTTP $ret_stat " . json_encode($ret_val) . " (invalid expected)\n"; goto print_and_exit; }
+}
+// e) SKID lookup of the device key (sha1 of 04||x||y = header kid) agrees with c); the CA list has the pinned root
+$hdr = json_decode(t13_b64url_dec($p[0]), true);
+$ret_val = false;
+$ret_stat = http_transaction("https", "GET", $t13_av, "/v1/skid/" . strtolower(@$hdr['kid']), $ret_val, $not_used);
+if ( ($ret_stat != 200) || !isset($ret_val['known']) || ($ret_val['known'] !== $t13_av_known) ) { echo "ERROR: $t13_av /v1/skid: HTTP $ret_stat " . json_encode($ret_val) . "\n"; goto print_and_exit; }
+$ret_val = false;
+$ret_stat = http_transaction("https", "GET", $t13_av, "/v1/pki", $ret_val, $not_used);
+$root_ok = false;
+if ( ($ret_stat == 200) && is_array(@$ret_val['certificates']) ) foreach ($ret_val['certificates'] as $c) if ( strtolower(@$c['sha256']) === $t13_root_fp ) $root_ok = true;
+if ( !$root_ok ) { echo "ERROR: $t13_av /v1/pki: HTTP $ret_stat, the pinned Encedo Root CA is not listed\n"; goto print_and_exit; }
+// f) set result
+$test_cfg['subtests'][8] = 'OK';                            // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
