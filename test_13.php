@@ -279,6 +279,7 @@ $test_cfg['blv'] = @$ret_val['blv'];
 $test_cfg['fwv'] = $ret_val['fwv'];
 $test_cfg['conf'] = "ENCEDO PPA";
 if ( strstr($ret_val['hwv'], "EPA") ) $test_cfg['conf'] = "ENCEDO EPA";
+if ( strstr($test_cfg['conf'], "EPA") ) goto print_and_exit;    // DEV-502: test not for EPA - config/attestation is a PPA-only route (404 on EPA)
 $t13_version = $ret_val;                                    // DEV-469: fwc / blc compared with the attestation fw_cid / bl_cid
 $ret = helper_checkin($cfg_domain);
 if ($ret == false) goto print_and_exit;                     // exit on error

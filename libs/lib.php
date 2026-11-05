@@ -178,7 +178,9 @@ function check_tls($domain) {
 
   if ($client == false) return false;
 
-  return stream_get_meta_data($client)['crypto'];
+  $meta = stream_get_meta_data($client);
+  fclose($client);                                            // DEV-502: the probe connection was never closed
+  return isset($meta['crypto']) ? $meta['crypto'] : false;    // DEV-502: no TLS session (e.g. the name resolves to another host) - was an undefined index warning and null
 }
 
 
