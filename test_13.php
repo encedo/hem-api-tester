@@ -279,8 +279,8 @@ $test_cfg['blv'] = @$ret_val['blv'];
 $test_cfg['fwv'] = $ret_val['fwv'];
 $test_cfg['conf'] = "ENCEDO PPA";
 if ( strstr($ret_val['hwv'], "EPA") ) $test_cfg['conf'] = "ENCEDO EPA";
-if ( strstr($test_cfg['conf'], "EPA") ) goto print_and_exit;    // DEV-502: test not for EPA - config/attestation is a PPA-only route (404 on EPA)
-$t13_version = $ret_val;                                    // DEV-469: fwc / blc compared with the attestation fw_cid / bl_cid
+$t13_epa = (strstr($test_cfg['conf'], "EPA") !== false);   // DEV-505: EPA - soft attestation signed by the EPA attestation key (was: test not for EPA, 404)
+$t13_version = $ret_val;                                   // DEV-469: fwc / blc compared with the attestation fw_cid / bl_cid
 $ret = helper_checkin($cfg_domain);
 if ($ret == false) goto print_and_exit;                     // exit on error
 // b) device attestation (no key): token of any scope, JWT checks, no key and pop block
@@ -294,6 +294,7 @@ $body = t13_check_jwt($jwt, $aud, $nonce);
 if ( !is_array($body) ) { echo "ERROR: device attestation: $body\n"; goto print_and_exit; }
 if ( isset($body['key']) || isset($body['pop']) ) { echo "ERROR: device attestation has a key/pop block\n"; goto print_and_exit; }
 if ( isset($body['device']['fws']) || isset($body['device']['bls']) || !isset($body['device']['policy']) ) { echo "ERROR: device block (DEV-423: no fws / bls, DEV-447: policy) " . json_encode($body['device']) . "\n"; goto print_and_exit; }
+if ( @$body['device']['assurance'] !== ($t13_epa ? "soft" : "hard") ) { echo "ERROR: device.assurance " . json_encode(@$body['device']['assurance']) . "\n"; goto print_and_exit; }   // DEV-505
 // DEV-469: the release CIDs (released builds only) are CIDv1 base32, the same as fwc / blc in /api/system/version
 foreach (array('fw_cid' => 'fwc', 'bl_cid' => 'blc') as $f => $v) {
   if ( @$body['device'][$f] !== @$t13_version[$v] ) { echo "ERROR: device attestation $f differs from version $v\n"; goto print_and_exit; }
@@ -558,10 +559,15 @@ $not_used = false;
 // a) without a nonce: three parts, device certificate present
 $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config/attestation", $ret_val, $not_used, $token);
-if ( ($ret_stat != 200) || !isset($ret_val['crt']) || !isset($ret_val['genuine']) ) { echo "ERROR: GET attestation: HTTP $ret_stat\n"; goto print_and_exit; }
-$crt_pem = "-----BEGIN CERTIFICATE-----\n" . chunk_split($ret_val['crt'], 64, "\n") . "-----END CERTIFICATE-----\n";
-$dev_pub = openssl_pkey_get_public($crt_pem);
-if ($dev_pub === false) { echo "ERROR: device certificate does not parse\n"; goto print_and_exit; }
+if ( ($ret_stat != 200) || (!$t13_epa && !isset($ret_val['crt'])) || !isset($ret_val['genuine']) ) { echo "ERROR: GET attestation: HTTP $ret_stat\n"; goto print_and_exit; }
+if ( $t13_epa ) {   // DEV-505: no certificate on the HEM (the ceremony certificate is in api.encedo) - the attestation key from its CSR
+  if ( isset($ret_val['crt']) || !isset($ret_val['csr']) || (t13_csr_ok($ret_val['csr'], $err) === false) ) { echo "ERROR: EPA GET attestation: crt present or bad csr " . @$err . "\n"; goto print_and_exit; }
+  $dev_pub = openssl_csr_get_public_key("-----BEGIN CERTIFICATE REQUEST-----\n" . chunk_split($ret_val['csr'], 64, "\n") . "-----END CERTIFICATE REQUEST-----\n");
+} else {
+  $crt_pem = "-----BEGIN CERTIFICATE-----\n" . chunk_split($ret_val['crt'], 64, "\n") . "-----END CERTIFICATE-----\n";
+  $dev_pub = openssl_pkey_get_public($crt_pem);
+}
+if ($dev_pub === false) { echo "ERROR: device certificate / attestation CSR does not parse\n"; goto print_and_exit; }
 $ec = openssl_pkey_get_details($dev_pub)['ec'];
 $skid = base64_encode(sha1("\x04" . str_pad($ec['x'], 32, "\0", STR_PAD_LEFT) . str_pad($ec['y'], 32, "\0", STR_PAD_LEFT), true));
 if ( isset($t13_att_skid) && (bin2hex(base64_decode($skid)) !== $t13_att_skid) ) { echo "ERROR: the attestation JWT key is not the key of the device certificate\n"; goto print_and_exit; }   // DEV-502 (T-13.1)
@@ -569,16 +575,18 @@ if ( isset($t13_att_skid) && (bin2hex(base64_decode($skid)) !== $t13_att_skid) )
 //   SHA-256, intermediates and CRLs downloaded) and is not revoked; with the check above the attestation JWT is signed by a certified key
 $t13_pki = "https://pki.encedo.com/";
 $t13_root_fp = "b28f4ee4cf26028260cf4f0db18bd2fb7234d172925797dca7f81e53a2816e9c";   // Encedo Root CA RSA 4096, SHA-256 of the DER
-$pki_root = @file_get_contents($t13_pki . "root-ca.pem");
-$pki_chain = @file_get_contents($t13_pki . "intermediates-chain.pem");   // Custody CA + Attestation CA
-$pki_crls = "";
-foreach (array("root-ca.crl", "attestation-ca.crl", "custody-ca.crl") as $f) {
-  $der = @file_get_contents($t13_pki . $f);
-  if ( $der === false ) { echo "ERROR: Encedo PKI: $f not downloaded\n"; goto print_and_exit; }
-  $pki_crls .= "-----BEGIN X509 CRL-----\n" . chunk_split(base64_encode($der), 64, "\n") . "-----END X509 CRL-----\n";
+if ( !$t13_epa ) {   // DEV-505: PPA only - EPA has no certificate on the HEM (no EPA CA yet)
+  $pki_root = @file_get_contents($t13_pki . "root-ca.pem");
+  $pki_chain = @file_get_contents($t13_pki . "intermediates-chain.pem");   // Custody CA + Attestation CA
+  $pki_crls = "";
+  foreach (array("root-ca.crl", "attestation-ca.crl", "custody-ca.crl") as $f) {
+    $der = @file_get_contents($t13_pki . $f);
+    if ( $der === false ) { echo "ERROR: Encedo PKI: $f not downloaded\n"; goto print_and_exit; }
+    $pki_crls .= "-----BEGIN X509 CRL-----\n" . chunk_split(base64_encode($der), 64, "\n") . "-----END X509 CRL-----\n";
+  }
+  if ( ($pki_root === false) || ($pki_chain === false) || (openssl_x509_fingerprint($pki_root, "sha256") !== $t13_root_fp) ) { echo "ERROR: Encedo PKI: root CA not downloaded or not the pinned one\n"; goto print_and_exit; }
+  if ( !t13_ossl(array("verify", "-no_check_time", "-crl_check_all", "-CRLfile", t13_tmp($pki_crls), "-CAfile", t13_tmp($pki_root), "-untrusted", t13_tmp($pki_chain), t13_tmp($crt_pem))) ) { echo "ERROR: the device certificate does not chain to the Encedo Root CA or is revoked\n"; goto print_and_exit; }
 }
-if ( ($pki_root === false) || ($pki_chain === false) || (openssl_x509_fingerprint($pki_root, "sha256") !== $t13_root_fp) ) { echo "ERROR: Encedo PKI: root CA not downloaded or not the pinned one\n"; goto print_and_exit; }
-if ( !t13_ossl(array("verify", "-no_check_time", "-crl_check_all", "-CRLfile", t13_tmp($pki_crls), "-CAfile", t13_tmp($pki_root), "-untrusted", t13_tmp($pki_chain), t13_tmp($crt_pem))) ) { echo "ERROR: the device certificate does not chain to the Encedo Root CA or is revoked\n"; goto print_and_exit; }
 // the device certificate stays valid after its notAfter: the CA signature and the CRL count, not the date (-no_check_time above)
 $p = explode('.', $ret_val['genuine']);
 if ( (count($p) != 3) || ($p[0] !== $skid) || (strlen(base64_decode($p[2], true)) != 64) ) { echo "ERROR: genuine without nonce: " . $ret_val['genuine'] . "\n"; goto print_and_exit; }   // DEV-484: SIG r || s 64 B
@@ -637,7 +645,9 @@ if ( t13_csr_ok($ret_val['csr'], $err) === false ) { echo "ERROR: gen_csr CSR: $
 $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config/attestation", $ret_val, $not_used, $token);
 if ( $ret_stat != 200 ) { echo "ERROR: GET attestation: HTTP $ret_stat\n"; goto print_and_exit; }
-if ( isset($ret_val['csr']) ) {
+if ( $t13_epa ) {
+  echo "    EPA: the attestation CSR is checked in subtest 6 (DEV-505)\n";
+} elseif ( isset($ret_val['csr']) ) {
   $der = t13_csr_ok($ret_val['csr'], $err);
   if ( $der === false ) { echo "ERROR: ATECC CSR: $err\n"; goto print_and_exit; }
   if ( !isset($ret_val['key']) || (strpos($der, "\x04\x14" . sha1(substr(base64_decode($ret_val['key']), -65), true)) === false) ) { echo "ERROR: ATECC CSR: SAN otherName is not SHA-1 of the attestation key\n"; goto print_and_exit; }
@@ -663,6 +673,11 @@ $test_cfg['subtests'][7] = 'OK';                            // mark this subtest
 TEST8:
 echo "  subtest-8\n";
 $test_cfg['subtests'][8] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
+if ( $t13_epa ) {   // DEV-505: EPA tokens are not validated by attest.encedo.com yet (no EPA CA / registry) - verified locally in 13.1 / 13.6
+  echo "    EPA: attest.encedo.com not used\n";
+  $test_cfg['subtests'][8] = 'N/A';
+  goto TEST8_END;
+}
 // DEV-502: end to end through the public verifier https://attest.encedo.com (DEV-498, stateless): POST /v1/validate {jwt, crt} -> status
 //   valid / valid_unverified / invalid (+ expired), GET /v1/skid/<sha1 hex of 04||x||y> -> {known}, GET /v1/pki -> the Encedo CA certificates
 $t13_av = "attest.encedo.com";
@@ -717,6 +732,7 @@ if ( ($ret_stat == 200) && is_array(@$ret_val['certificates']) ) foreach ($ret_v
 if ( !$root_ok ) { echo "ERROR: $t13_av /v1/pki: HTTP $ret_stat, the pinned Encedo Root CA is not listed\n"; goto print_and_exit; }
 // f) set result
 $test_cfg['subtests'][8] = 'OK';                            // mark this subtest as OK
+TEST8_END:
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
@@ -729,7 +745,7 @@ $test_cfg['subtests'][8] = 'OK';                            // mark this subtest
 $check_passed = 0;
 $check_failed = 0;
 foreach($test_cfg['subtests'] as $no => $val) {
-  if ($val === 'OK') $check_passed++;
+  if (($val === 'OK') || ($val === 'N/A')) $check_passed++;   // DEV-505: N/A = not applicable to this configuration (13.8 on EPA)
   else $check_failed++;
 }
 if ($check_failed == 0) $test_cfg['result'] = 'PASS';

@@ -77,6 +77,23 @@ if ($cfg_enforce_ppa_domain == 0) {
   $ret_stat = http_transaction("https", "GET", "api.encedo.com", "/domain/check/$new_prefix", $ret_val);
   if ( $ret_stat != 404 ) goto print_and_exit;                // 404 means domain prefix is free (available)
 }
+// d2) DEV-505: EPA - attestation key bootstrap (POST /api/system/config "att" before the initialisation), the CSR of the derived key;
+//     409 = "att" already sent since the power-up (on the rack: by the SBC) - no CSR to show
+if ( strstr($test_cfg['conf'], "EPA") ) {
+  $att_seed = isset($cfg_epa_att_seed) ? $cfg_epa_att_seed : base64_encode(openssl_random_pseudo_bytes(32));   // config.php is local - a random test seed when not set
+  $att_req = array('att' => array('seed' => $att_seed, 'epoch' => 0));
+  echo "    att request:  " . json_encode($att_req) . "\n";
+  $ret_val = false;
+  $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/config", $ret_val, json_encode($att_req));
+  echo "    att response: HTTP $ret_stat " . json_encode($ret_val) . "\n";
+  if ( $ret_stat == 200 ) {
+    if ( !isset($ret_val['att']['csr']) ) goto print_and_exit;
+    $f = tempnam(sys_get_temp_dir(), "t2"); file_put_contents($f, base64_decode($ret_val['att']['csr']));
+    $out = shell_exec("openssl req -inform DER -in " . escapeshellarg($f) . " -verify -noout -subject 2>&1"); unlink($f);
+    echo "    att CSR: " . str_replace("\n", " | ", trim($out)) . "\n";
+    if ( (strpos($out, "verify OK") === false) || !preg_match('/CN=EPA@\d+/', $out) ) goto print_and_exit;
+  } elseif ( $ret_stat != 409 ) goto print_and_exit;
+}
 // e) call initialization - TOE challenge phase
 $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/auth/init", $ret_val);
