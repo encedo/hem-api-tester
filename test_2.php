@@ -67,7 +67,7 @@ if ( !isset($ret_val['status']) ) goto print_and_exit;    // exit as well if mis
 // d) prepare new domain prefix and check availability
 if ($cfg_enforce_ppa_domain == 0) {
   $new_prefix = "cctest" . time();
-} else {   
+} else {
   $new_prefix = 'my';
 }
 $new_fqdn = $new_prefix . ".ence.do";
@@ -76,6 +76,23 @@ if ($cfg_enforce_ppa_domain == 0) {
   $ret_val = false;
   $ret_stat = http_transaction("https", "GET", "api.encedo.com", "/domain/check/$new_prefix", $ret_val);
   if ( $ret_stat != 404 ) goto print_and_exit;                // 404 means domain prefix is free (available)
+}
+// d2) DEV-505: EPA - attestation key bootstrap (POST /api/system/config "att" before the initialisation), the CSR of the derived key;
+//     409 = "att" already sent since the power-up (on the rack: by the SBC) - no CSR to show
+if ( strstr($test_cfg['conf'], "EPA") ) {
+  $att_seed = isset($cfg_epa_att_seed) ? $cfg_epa_att_seed : base64_encode(openssl_random_pseudo_bytes(32));   // config.php is local - a random test seed when not set
+  $att_req = array('att' => array('seed' => $att_seed, 'epoch' => 0));
+  echo "    att request:  " . json_encode($att_req) . "\n";
+  $ret_val = false;
+  $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/config", $ret_val, json_encode($att_req));
+  echo "    att response: HTTP $ret_stat " . json_encode($ret_val) . "\n";
+  if ( $ret_stat == 200 ) {
+    if ( !isset($ret_val['att']['csr']) ) goto print_and_exit;
+    $f = tempnam(sys_get_temp_dir(), "t2"); file_put_contents($f, base64_decode($ret_val['att']['csr']));
+    $out = shell_exec("openssl req -inform DER -in " . escapeshellarg($f) . " -verify -noout -subject 2>&1"); unlink($f);
+    echo "    att CSR: " . str_replace("\n", " | ", trim($out)) . "\n";
+    if ( (strpos($out, "verify OK") === false) || !preg_match('/CN=EPA@\d+/', $out) ) goto print_and_exit;
+  } elseif ( $ret_stat != 409 ) goto print_and_exit;
 }
 // e) call initialization - TOE challenge phase
 $ret_val = false;
@@ -118,9 +135,35 @@ $init_val = array(                                 //compose TOE req init data
       'trusted_backend' => true,
       'allow_keysearch' => true,
       'gen_csr' => true,
-      'origin' => "*"
+      'origin' => "*",
+      'policy' => (getenv("ENCEDO_T2_POLICY") !== false) ? json_decode(getenv("ENCEDO_T2_POLICY"), true)   // DEV-447: set once at personalisation;
+                  : array("raw_ecdh_enabled", "pubkey_in_search", "pubkey_in_list")                       //   ENCEDO_T2_POLICY (JSON array) overrides it - T-16
       )
   );
+// f2) invalid initialization data is refused and the TOE stays not initialised (DEV-438): master key shorter than
+//     32 bytes, netmask prefix out of range (PPA)
+$bad_cfgs = array( array('masterkey' => base64_encode(substr($admin_public_key, 0, 31))),
+                   array('policy' => array("bogus")), array('policy' => "raw_ecdh_enabled") );   // DEV-447: unknown name, not an array
+if ( $test_cfg['conf'] == "ENCEDO PPA" ) {
+  $bad_cfgs[] = array('ip' => "192.168.7.1/33");
+  $bad_cfgs[] = array('ip' => "192.168.7.1/-1");
+}
+foreach ($bad_cfgs as $bad) {
+  $bad_val = $init_val;
+  $bad_val['cfg'] = array_merge($init_val['cfg'], $bad);
+  // DEV-499 (D1): the challenge jti is accepted once (A4) - a fresh GET /api/auth/init for every attempt (was: the same jti in six requests)
+  $ret_val = false;
+  if ( http_transaction("http", "GET", $cfg_domain, "/api/auth/init", $ret_val) != 200 ) goto print_and_exit;
+  $bad_val['jti'] = $ret_val['jti']; $bad_val['aud'] = $ret_val['spk']; $bad_val['exp'] = $ret_val['exp'];
+  $post_data = json_encode( array('init' => ejwt_generate($bad_val, $admin_secret, base64_decode($ret_val['spk']))) );
+  $ret_val = false;
+  $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/auth/init", $ret_val, $post_data);
+  if ( $ret_stat != 400 ) { echo "    init with " . json_encode($bad) . ": HTTP $ret_stat, expected 400\n"; goto print_and_exit; }
+}
+$ret_val = false;                                           // DEV-499 (D1): fresh challenge for the real initialisation too
+if ( http_transaction("http", "GET", $cfg_domain, "/api/auth/init", $ret_val) != 200 ) goto print_and_exit;
+$init_val['jti'] = $ret_val['jti']; $init_val['aud'] = $ret_val['spk']; $init_val['exp'] = $ret_val['exp'];
+$ext_pubkey = base64_decode($ret_val['spk']);
 $init_data = ejwt_generate($init_val, $admin_secret, $ext_pubkey);
 // g) post initialization data by calling TOE/HEM API
 $post_data = json_encode( array('init' => $init_data) );
@@ -137,6 +180,18 @@ do {
   if ( $ret_stat != 200 ) goto print_and_exit;
   if ( isset($ret_val['format']) ) {
     if ($ret_val['format'] == "done") break;
+    // N18: while the storage is formatted only /api/system/* is served - other API calls get 409
+    if (!isset($n18_checked)) {
+      $n18_checked = true;
+      $dummy_val = false;
+      $ret_val = false;
+      $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/auth/token", $ret_val, $dummy_val);
+      if ( $ret_stat != 409 ) { echo "ERROR: N18 auth/token during format: HTTP $ret_stat\n"; goto print_and_exit; }
+      $ret_val = false;
+      $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/keymgmt/list", $ret_val, $dummy_val);
+      if ( $ret_stat != 409 ) { echo "ERROR: N18 keymgmt/list during format: HTTP $ret_stat\n"; goto print_and_exit; }
+      echo "    N18: auth/token and keymgmt/list refused (409) during format\n";
+    }
   } else {
     break;
   }
@@ -166,7 +221,7 @@ if ($cfg_enforce_ppa_domain == 0) {
       if ( $ret_stat == 200 ) break;
       if ( $ret_stat >= 400 ) goto print_and_exit;  // exit on API call FAIL
       sleep(3);
-    } while(true);  
+    } while(true);
     $cert_data = $ret_val;
   } else {
     $cert_data = $ret_val;
@@ -244,7 +299,7 @@ $test_cfg['subtests'][2] = 'ERROR';                        // mark this subtest 
 $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/auth/init", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 406 ) goto print_and_exit;               // expected 406 means already inited - expected state
+if ( $ret_stat != 409 ) goto print_and_exit;               // expected 409 means already inited - expected state
 // d) set result
 $test_cfg['subtests'][2] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
@@ -303,7 +358,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 print_and_exit:
   $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
-  print_result( $test_cfg );  
+  print_result( $test_cfg );
   die;
 
 /////////////////////////////////////////////////////////////////////

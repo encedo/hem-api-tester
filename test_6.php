@@ -7,7 +7,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-6";
 $test_descr = "External authenticator usage functionality";
-$test_subtest_cnt = 2;
+$test_subtest_cnt = 3;   // DEV-436: 3 = multi-scope request
 
 
 // initialize the execution env
@@ -36,7 +36,7 @@ if ( intval($ret_val['fls_state']) !== 0) {
   goto print_and_exit;     // exit as well if prereq not fulfill
 }
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
-  $cfg_domain = $ret_val['hostname'];                      
+  $cfg_domain = $ret_val['hostname'];
 }
 // b) detect, get version details etc
 $ret_val = false;
@@ -54,7 +54,7 @@ if ($ret == false) goto print_and_exit;                     // exit on error
 // d) perform REMOTE USER authentication
 // get backend EPK key
 $ret_val = false;
-$ret_stat = http_transaction("https", "GET", "api.encedo.com", "/notify/session", $ret_val, $post_data);
+$ret_stat = http_transaction("https", "GET", "api.encedo.com", "/notify/session", $ret_val, false);   // DEV-502: $post_data was undefined here (a warning since post_data is by value)
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
 $epk = $ret_val['epk'];
@@ -73,6 +73,7 @@ $ret_stat = http_transaction("https", "POST", "api.encedo.com", "/notify/event/n
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
 $eventid = $ret_val['eventid'];
+@file_put_contents( __DIR__ . "/out/extauth_exchange.json", json_encode( array('type' => "event", 'eventid' => $eventid, 'expect' => "allow") ) );   // for ExtAuth_Simulator.php
 echo "    check mobile app for notification - got 60sec\n";
 $count = 0;
 do {
@@ -83,11 +84,11 @@ do {
   $count++;
   if ($count > 12) break;
   sleep(5);
-} while (true);  
-if ( $ret_stat != 200 ) goto print_and_exit;                 // other result than 200 means no user interaction in time frame 
+} while (true);
+if ( $ret_stat != 200 ) goto print_and_exit;                 // other result than 200 means no user interaction in time frame
 if (isset($ret_val['deny']) ) goto print_and_exit;              // if set user selected DENY on mobile app
 
-$authreply = $ret_val['authreply'];  
+$authreply = $ret_val['authreply'];
 // validate reply and retrieve access token
 $ret_val = false;
 $post_data = json_encode( array('authreply' => $authreply) );
@@ -115,10 +116,13 @@ $test_cfg['subtests'][1] = 'OK';                              // mark this subte
 TEST2:
 echo "  subtest-2\n";
 $test_cfg['subtests'][2] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
+// DEV-502 (T-6.2): a backend / app test - after a deny the app sends no signed authreply, so nothing reaches the HEM after
+//   ext/request (asserted in 6.1); the HEM side (ext/token refuses a reply that is not signed by the paired app) is T-15
+echo "    (backend / app path: the HEM is not called after a deny)\n";
 // a) perform REMOTE USER authentication and expect DENY returned
 // get backend EPK key
 $ret_val = false;
-$ret_stat = http_transaction("https", "GET", "api.encedo.com", "/notify/session", $ret_val, $post_data);
+$ret_stat = http_transaction("https", "GET", "api.encedo.com", "/notify/session", $ret_val, false);   // DEV-502: $post_data was undefined here (a warning since post_data is by value)
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
 $epk = $ret_val['epk'];
@@ -137,6 +141,7 @@ $ret_stat = http_transaction("https", "POST", "api.encedo.com", "/notify/event/n
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
 $eventid = $ret_val['eventid'];
+@file_put_contents( __DIR__ . "/out/extauth_exchange.json", json_encode( array('type' => "event", 'eventid' => $eventid, 'expect' => "deny") ) );   // for ExtAuth_Simulator.php
 echo "    check mobile app for notification - got 60sec\n";
 $count = 0;
 do {
@@ -147,8 +152,8 @@ do {
   $count++;
   if ($count > 12) break;
   sleep(5);
-} while (true);  
-if ( $ret_stat != 200 ) goto print_and_exit;                 // other result than 200 means no user interaction in time frame 
+} while (true);
+if ( $ret_stat != 200 ) goto print_and_exit;                 // other result than 200 means no user interaction in time frame
 if ( !isset($ret_val['deny']) ) goto print_and_exit;         // expect to get DENY
 /*
 NOTE:
@@ -157,6 +162,72 @@ Otherwise the object is generated generated and 'deny'=true is returned. That is
 */
 // e) set result
 $test_cfg['subtests'][2] = 'OK';                           // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 3        ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST3:
+echo "  subtest-3\n";
+$test_cfg['subtests'][3] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) REMOTE USER authentication with a multi-scope request (DEV-436): scope array -> the app gets the values separated by
+//    spaces, approves them -> the token scope is an array and grants both endpoints
+$ret_val = false;
+$ret_stat = http_transaction("https", "GET", "api.encedo.com", "/notify/session", $ret_val, false);   // DEV-502: $post_data was undefined here (a warning since post_data is by value)
+if ( $cfg_debug ) var_dump( $ret_val );
+if ( $ret_stat != 200 ) goto print_and_exit;
+$epk = $ret_val['epk'];
+$req = array( 'epk' => $epk, 'exp' => time()+120, 'scope' => array("keymgmt:list", "system:config"));
+$post_data = json_encode( $req );
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/request", $ret_val, $post_data);
+if ( $cfg_debug ) var_dump( $ret_val );
+if ( $ret_stat != 200 ) goto print_and_exit;
+$auth_challange = $ret_val;
+$ret_val = false;
+$post_data = $auth_challange;
+$ret_stat = http_transaction("https", "POST", "api.encedo.com", "/notify/event/new", $ret_val, $post_data);
+if ( $cfg_debug ) var_dump( $ret_val );
+if ( $ret_stat != 200 ) goto print_and_exit;
+$eventid = $ret_val['eventid'];
+@file_put_contents( __DIR__ . "/out/extauth_exchange.json", json_encode( array('type' => "event", 'eventid' => $eventid, 'expect' => "allow") ) );   // for ExtAuth_Simulator.php
+echo "    check mobile app for notification - got 60sec\n";
+$count = 0;
+do {
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "GET", "api.encedo.com", "/notify/event/check/$eventid", $ret_val);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 202 ) break;                              // 202 when pending, 200 when the app answered
+  $count++;
+  if ($count > 12) break;
+  sleep(5);
+} while (true);
+if ( $ret_stat != 200 ) goto print_and_exit;
+if (isset($ret_val['deny']) ) goto print_and_exit;
+$authreply = $ret_val['authreply'];
+$ret_val = false;
+$post_data = json_encode( array('authreply' => $authreply) );
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/token", $ret_val, $post_data);
+if ( $cfg_debug ) var_dump( $ret_val );
+if ( $ret_stat != 200 ) goto print_and_exit;
+$token = $ret_val['token'];
+// b) the token scope is the approved array
+$token_parts = explode(".", $token);
+$token_details = json_decode(base64url_decode($token_parts[1]), true);
+if ( $token_details['scope'] !== array("keymgmt:list", "system:config") ) { echo "    token scope " . json_encode($token_details['scope']) . "\n"; goto print_and_exit; }
+// c) both values work
+$ret_val = false;
+$post_data = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token);
+if ( $ret_stat != 200 ) { echo "    system/config with the array token: HTTP $ret_stat\n"; goto print_and_exit; }
+$ret_val = false;
+$ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/list", $ret_val, $post_data, $token);
+if ( $ret_stat != 200 ) { echo "    keymgmt/list with the array token: HTTP $ret_stat\n"; goto print_and_exit; }
+// d) set result
+$test_cfg['subtests'][3] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
@@ -181,7 +252,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 print_and_exit:
   $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
-  print_result( $test_cfg );  
+  print_result( $test_cfg );
   die;
 
 /////////////////////////////////////////////////////////////////////

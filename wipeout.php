@@ -18,16 +18,17 @@ $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
-  $cfg_domain = $ret_val['hostname'];                      
+  $cfg_domain = $ret_val['hostname'];
 }
 // b) get access token is needed - only if device is inited
 $token = false;
 if ( !isset($ret_val['inited']) ) {
   $ret = helper_checkin($cfg_domain);
-  if ($ret == false) goto print_and_exit;                     
-  $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");   
-  if ($token == false) goto print_and_exit;                   
-  $post_data = json_encode( array( 'wipeout' => true ) );
+  if ($ret == false) goto print_and_exit;
+  $token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
+  if ($token == false) goto print_and_exit;
+  // "php wipeout.php factory": service wipe to the factory default - the internal disk (UI, TLS files, logs) is formatted too
+  $post_data = json_encode( array( 'wipeout' => in_array("factory", $argv) ? "factory" : true ) );
   $ret_val = false;
   $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token);
   if ( $cfg_debug ) var_dump( $ret_val );

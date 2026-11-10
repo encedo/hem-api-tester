@@ -35,7 +35,7 @@ if ( intval($ret_val['fls_state']) !== 0) {
   goto print_and_exit;     // exit as well if prereq not fulfill
 }
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
-  $cfg_domain = $ret_val['hostname'];                      
+  $cfg_domain = $ret_val['hostname'];
   echo "  New FQDN: $cfg_domain \n";
 }
 // b) detect, get version details etc
@@ -80,7 +80,7 @@ $user_public_key = sodium_crypto_box_publickey_from_secretkey($user_secret);
 //echo "USER Private key: " . base64_encode($user_secret) . "\n";
 //echo "USER Public key:  " . base64_encode($user_public_key) . "\n";
 $ext_pubkey = base64_decode($auth_challange['spk']);
-$auth_val_user = array(                                 
+$auth_val_user = array(
   'jti' => $auth_challange['jti'],
   'aud' => $auth_challange['spk'],
   'exp' => $auth_challange['exp'],
@@ -89,7 +89,7 @@ $auth_val_user = array(
   'scope' => "system:config",
   'ctx' => "place_here_max_64chars"
   );
-unset($auth_challange);  
+unset($auth_challange);
 //authentication USER and get token
 $auth_data_user = ejwt_generate($auth_val_user, $user_secret, $ext_pubkey);
 $post_data = json_encode( array('auth' => $auth_data_user) );
@@ -118,7 +118,7 @@ $admin_public_key = sodium_crypto_box_publickey_from_secretkey($admin_secret);
 //echo "ADMIN Private key: " . base64_encode($admin_secret) . "\n";
 //echo "ADMIN Public key:  " . base64_encode($admin_public_key) . "\n";
 $ext_pubkey = base64_decode($auth_challange['spk']);
-$auth_val_admin = array(                                 
+$auth_val_admin = array(
   'jti' => $auth_challange['jti'],
   'aud' => $auth_challange['spk'],
   'exp' => $auth_challange['exp'],
@@ -126,7 +126,7 @@ $auth_val_admin = array(
   'iss' => base64_encode($admin_public_key),
   'scope' => "system:config"
   );
-unset($auth_challange);  
+unset($auth_challange);
 //authentication ADMIN and get token
 $auth_data_admin = ejwt_generate($auth_val_admin, $admin_secret, $ext_pubkey);
 $post_data = json_encode( array('auth' => $auth_data_admin) );
@@ -157,7 +157,7 @@ $test_cfg['subtests'][2] = 'ERROR';                        // mark this subtest 
 // USER is allowed to call this API but ADMIN is not
 // check user token
 $ret_val = false;
-$dummy_post_data = '{"epk":"SfxY+3RupkwK82cpOO+30VHyPMm0LAlYT+WeNtpIx2A="}';    // just a placeholder, 
+$dummy_post_data = '{"epk":"SfxY+3RupkwK82cpOO+30VHyPMm0LAlYT+WeNtpIx2A="}';    // just a placeholder,
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $dummy_post_data, $user_auth_token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;               // expected 200 is allowed https://docs.encedo.com/hem-api/reference/api-reference/authorization/external-authenticator/registration#allowed-users
@@ -165,7 +165,7 @@ if ( $ret_stat != 200 ) goto print_and_exit;               // expected 200 is al
 $ret_val = false;
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $dummy_post_data, $admin_auth_token);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 403 ) goto print_and_exit;               // expected 403 AS is NOT allowed 
+if ( $ret_stat != 403 ) goto print_and_exit;               // expected 403 AS is NOT allowed
 // b) check SCOPE validation
 // both tokens got required SCOPE
 // check user token
@@ -178,7 +178,7 @@ if ( $ret_stat != 403 ) goto print_and_exit;               // expected 403 as ha
 $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/logger/key", $ret_val, $dummy_post_data, $admin_auth_token);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 403 ) goto print_and_exit;               // expected 403 
+if ( $ret_stat != 403 ) goto print_and_exit;               // expected 403
 // c) set result
 $test_cfg['subtests'][2] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
@@ -192,7 +192,7 @@ $test_cfg['subtests'][2] = 'OK';                           // mark this subtest 
 TEST3:
 echo "  subtest-3\n";
 $test_cfg['subtests'][3] = 'ERROR';                       // mark this subtest default as ERROR - initialization as subtest is ongoing
-// a) performe correct user authentication 
+// a) performe correct user authentication
 $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/auth/token", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
@@ -204,7 +204,7 @@ $salt = $auth_challange['eid'];
 $user_secret = hash_pbkdf2("sha256", $password, $salt, 600000, 32, true);
 $user_public_key = sodium_crypto_box_publickey_from_secretkey($user_secret);
 $ext_pubkey = base64_decode($auth_challange['spk']);
-$auth_val_user = array(                                 
+$auth_val_user = array(
   'jti' => $auth_challange['jti'],
   'aud' => $auth_challange['spk'],
   'exp' => $auth_challange['exp'],
@@ -212,7 +212,7 @@ $auth_val_user = array(
   'iss' => base64_encode($user_public_key),
   'scope' => "system:config"
   );
-unset($auth_challange);  
+unset($auth_challange);
 //authentication USER and get token
 $auth_data_user = ejwt_generate($auth_val_user, $user_secret, $ext_pubkey);
 $post_data = json_encode( array('auth' => $auth_data_user) );
@@ -242,7 +242,7 @@ do {
   $user_secret = hash_pbkdf2("sha256", $password, $salt, 600000, 32, true);
   $user_public_key = sodium_crypto_box_publickey_from_secretkey($user_secret);
   $ext_pubkey = base64_decode($auth_challange['spk']);
-  $auth_val_user = array(                                 
+  $auth_val_user = array(
     'jti' => $auth_challange['jti'],
     'aud' => $auth_challange['spk'],
     'exp' => $auth_challange['exp'],
@@ -250,7 +250,7 @@ do {
     'iss' => base64_encode($user_public_key),
     'scope' => "system:config"
     );
-  unset($auth_challange);  
+  unset($auth_challange);
   //authentication USER and get token
   $auth_data_user = ejwt_generate($auth_val_user, $user_secret, $ext_pubkey);
   $post_data = json_encode( array('auth' => $auth_data_user) );
@@ -265,14 +265,14 @@ do {
   $counter++;
   //regards SFR FPT_AFL.1 - after 3 failed authentication, response time is 3x loger (3x500ms insteed of 1x500ms )
   if ($counter > 3) {
-     if ($hrts > (3*500)) { 
+     if ($hrts > (3*500)) {
        $subtest3_ok = true;                                 // expected correct result - after 3 failed auth response time increase
        $last_failed_auth_time = time();                     //save timestamp of last failed authentication
      }
-  }  
+  }
   if ($counter >= 5) break;
-  sleep(1);  
-} while (true);  
+  sleep(1);
+} while (true);
 if ($subtest3_ok == false) goto print_and_exit;          // subtest failed - 3 (three) wrong auth not detected
 // c) now correct auth for next 20sec
 $start_time = $last_failed_auth_time - 1;                 //-1 as a jitter, we measure time inaccurate (1sec res only)
@@ -291,7 +291,7 @@ do {
   $user_secret = hash_pbkdf2("sha256", $password, $salt, 600000, 32, true);
   $user_public_key = sodium_crypto_box_publickey_from_secretkey($user_secret);
   $ext_pubkey = base64_decode($auth_challange['spk']);
-  $auth_val_user = array(                                 
+  $auth_val_user = array(
     'jti' => $auth_challange['jti'],
     'aud' => $auth_challange['spk'],
     'exp' => $auth_challange['exp'],
@@ -299,7 +299,7 @@ do {
     'iss' => base64_encode($user_public_key),
     'scope' => "system:config"
     );
-  unset($auth_challange);  
+  unset($auth_challange);
   //authentication USER and get token
   $auth_data_user = ejwt_generate($auth_val_user, $user_secret, $ext_pubkey);
   $post_data = json_encode( array('auth' => $auth_data_user) );
@@ -322,8 +322,8 @@ do {
      if ($hrts < 3*500) $subtest3_ok = true;                // expected correct action
   }
   if ( $elapsed > 30) break;                                // stop after 30sec
-  sleep(1);  
-} while (true);  
+  sleep(1);
+} while (true);
 if ($subtest3_ok == false) goto print_and_exit;            // subtest failed - 3 (three) wrong auth not detected
 // d) set result
 $test_cfg['subtests'][3] = 'OK';                           // mark this subtest as OK
@@ -338,7 +338,7 @@ $test_cfg['subtests'][3] = 'OK';                           // mark this subtest 
 TEST4:
 echo "  subtest-4\n";
 $test_cfg['subtests'][4] = 'ERROR';                       // mark this subtest default as ERROR - initialization as subtest is ongoing
-// a) performe correct user authentication 
+// a) performe correct user authentication
 $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/auth/token", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
@@ -350,7 +350,7 @@ $salt = $auth_challange['eid'];
 $user_secret = hash_pbkdf2("sha256", $password, $salt, 600000, 32, true);
 $user_public_key = sodium_crypto_box_publickey_from_secretkey($user_secret);
 $ext_pubkey = base64_decode($auth_challange['spk']);
-$auth_val_user = array(                                 
+$auth_val_user = array(
   'jti' => $auth_challange['jti'],
   'aud' => $auth_challange['spk'],
   'exp' => $auth_challange['exp'],
@@ -358,7 +358,7 @@ $auth_val_user = array(
   'iss' => base64_encode($user_public_key),
   'scope' => "system:config"
   );
-unset($auth_challange);  
+unset($auth_challange);
 //authentication USER and get token
 $auth_data_user = ejwt_generate($auth_val_user, $user_secret, $ext_pubkey);
 $post_data = json_encode( array('auth' => $auth_data_user) );
@@ -370,10 +370,10 @@ $user_auth_token = $ret_val['token'];
 //echo "  USER token: $user_auth_token\n";
 // b) check token by using it
 $ret_val = false;
-$dummy_post_data = '{"epk":"SfxY+3RupkwK82cpOO+30VHyPMm0LAlYT+WeNtpIx2A="}';    // just a placeholder, 
+$dummy_post_data = '{"epk":"SfxY+3RupkwK82cpOO+30VHyPMm0LAlYT+WeNtpIx2A="}';    // just a placeholder,
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $dummy_post_data, $user_auth_token);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 200 ) goto print_and_exit;               // expected 200 if allowed 
+if ( $ret_stat != 200 ) goto print_and_exit;               // expected 200 if allowed
 // c) modify token by changing 'exp' value (extending lifespan of the token)
 $token_parts = explode(".", $user_auth_token);
 $token_details = json_decode(base64_decode($token_parts[1]), true);
@@ -381,7 +381,7 @@ $token_details['exp'] = $token_details['exp'] + 3600;       //add 3600sec to lif
 $new_token = $token_parts[0] . '.' . base64_encode(json_encode($token_details)) .'.' . $token_parts[2];
 //use new token
 $ret_val = false;
-$dummy_post_data = '{"epk":"SfxY+3RupkwK82cpOO+30VHyPMm0LAlYT+WeNtpIx2A="}';    // just a placeholder, 
+$dummy_post_data = '{"epk":"SfxY+3RupkwK82cpOO+30VHyPMm0LAlYT+WeNtpIx2A="}';    // just a placeholder,
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $dummy_post_data, $new_token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 401 ) goto print_and_exit;               // expected 401 as token is non-genuine
@@ -398,29 +398,30 @@ $test_cfg['subtests'][4] = 'OK';                           // mark this subtest 
 TEST5:
 echo "  subtest-5\n";
 $test_cfg['subtests'][5] = 'ERROR';                       // mark this subtest default as ERROR - initialization as subtest is ongoing
-// a) performe correct user authentication 
-$token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config", 120); 
+// a) performe correct user authentication
+$token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config", 60);   // short-lived token - the subtest waits until it expires (60 s: tolerates a host / device clock offset)
 if ($token == false) goto print_and_exit;
 // b) check token by using it
 $ret_val = false;
-$dummy_post_data = '{"epk":"SfxY+3RupkwK82cpOO+30VHyPMm0LAlYT+WeNtpIx2A="}';    // just a placeholder, 
-$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $dummy_post_data, $user_auth_token);
+$dummy_post_data = '{"epk":"SfxY+3RupkwK82cpOO+30VHyPMm0LAlYT+WeNtpIx2A="}';    // just a placeholder,
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $dummy_post_data, $token);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 200 ) goto print_and_exit;               // expected 200 if allowed 
+if ( $ret_stat != 200 ) goto print_and_exit;               // expected 200 if allowed
 // c) wait until teh token expire
-$token_parts = explode(".", $user_auth_token);
+$token_parts = explode(".", $token);
 $token_details = json_decode(base64_decode($token_parts[1]), true);
+//var_dump($token_details);
 //echo "Local time: " . date("H:i:s") . "\n";
 //echo " Token IAT: " . date("H:i:s ", $token_details['iat']) . "\n";
 //echo " Token EXP: " . date("H:i:s", $token_details['exp']) . "\n";
-$slp = $token_details['exp'] - time();
+$slp = $token_details['exp'] - $token_details['iat'];
 //echo " sleep for: $slp sec\n";
 sleep($slp + 3);
 //echo "Local time: " . date("H:i:s") . "\n";
 // d) check token by using it - should fail
 $ret_val = false;
-$dummy_post_data = '{"epk":"SfxY+3RupkwK82cpOO+30VHyPMm0LAlYT+WeNtpIx2A="}';    // just a placeholder, 
-$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $dummy_post_data, $user_auth_token);
+$dummy_post_data = '{"epk":"SfxY+3RupkwK82cpOO+30VHyPMm0LAlYT+WeNtpIx2A="}';    // just a placeholder,
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $dummy_post_data, $token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 401 ) goto print_and_exit;               // expected 401 as token expired
 // e) set result
@@ -448,7 +449,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 print_and_exit:
   $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
-  print_result( $test_cfg );  
+  print_result( $test_cfg );
   die;
 
 /////////////////////////////////////////////////////////////////////

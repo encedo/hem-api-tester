@@ -36,7 +36,7 @@ if ( intval($ret_val['fls_state']) !== 0) {
   goto print_and_exit;     // exit as well if prereq not fulfill
 }
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
-  $cfg_domain = $ret_val['hostname'];                      
+  $cfg_domain = $ret_val['hostname'];
 }
 // b) detect, get version details etc
 $ret_val = false;
@@ -86,11 +86,12 @@ if ( $ret_stat != 200 ) goto print_and_exit;
 $rid = $ret_val['rid'];
 $qr_link = $ret_val['link'];
 // i) generate QR code and show it - ready to scan
-$hash = 'not_implemented_yet';
+$hash = base64_encode( hash('sha256', $auth_challange['request'], true) );   // base64(SHA-256(request)) - checked by authenticator v2
 $qr_data = array( 'link' => $qr_link, 'hash' => $hash, 'user' => $encedo_config['user'], 'email' => $encedo_config['email'], 'hostname' => $encedo_config['hostname']);
 $qr_body = json_encode( $qr_data );
+@file_put_contents( __DIR__ . "/out/extauth_exchange.json", json_encode( array('type' => "pair", 'qr' => $qr_data) ) );   // for ExtAuth_Simulator.php (instead of scanning the QR code)
 $google_gen_qr_link = "https://quickchart.io/qr?size=500&text=" . urlencode( $qr_body );
-if ( $cfg_debug ) var_dump( $google_gen_qr_link );     
+if ( $cfg_debug ) var_dump( $google_gen_qr_link );
 //echo "QR code link\n$google_gen_qr_link\n";
 $png = @file_get_contents($google_gen_qr_link);
 $temp_file = tempnam(sys_get_temp_dir(), 'encedo') . '.png';
@@ -98,7 +99,7 @@ file_put_contents($temp_file, $png);
 if (PHP_OS == "WINNT") {
   shell_exec("start $temp_file");
 } else {
-  shell_exec("sudo xdg-open \"$temp_file\" 2>/dev/null 1>/dev/null &");	
+  shell_exec("sudo xdg-open \"$temp_file\" 2>/dev/null 1>/dev/null &");
 }
 // j) wait to user to scan the code - in polling mode
 echo "    scan QR code - got 60sec\n";
@@ -111,9 +112,9 @@ do {
   $count++;
   if ($count > 12) break;
   sleep(5);
-} while (true);  
+} while (true);
 if ( $ret_stat != 200 ) goto print_and_exit;
-$reply = $ret_val;  
+$reply = $ret_val;
 // k) validate raiping at encedo
 $ret_val = false;
 $post_data = json_encode( array('pid' => $reply['pid'], 'reply' => $reply['reply']) );
@@ -141,7 +142,7 @@ TEST2:
 echo "  subtest-2\n";
 $test_cfg['subtests'][2] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) perform local USER authentication
-$token_incorrect = helper_authorize($cfg_domain, $cfg_passpharse, "system:wrong");
+$token_incorrect = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");   // DEV-436: a valid scope of another endpoint ("system:wrong" is not a scope - 400 at auth/token)
 if ($token_incorrect == false) goto print_and_exit;                    // exit on error
 // b) get EID - reuser correct token
 $ret_val = false;
@@ -177,7 +178,8 @@ TEST3:
 echo "  subtest-3\n";
 if ($diag_mode == false) {
   echo "    No DIAG mode, subtest will be skipped.\n";
-  goto print_and_exit;
+  $test_cfg['subtests'][3] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
+  goto test_summary;
 }
 $test_cfg['subtests'][3] = 'ERROR';                       // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) simulate failer state
@@ -185,19 +187,30 @@ $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/diag/break_temp", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200 - all good, FLS.1 triggered
-sleep(3);
+// the self-test sets the failure state asynchronously - poll up to 10 s; the checks are evaluated after the reboot
+$fls_ok = false;
+for ($i = 0; $i < 10; $i++) {
+  sleep(1);
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val);
+  if ( ($ret_stat == 200) && ($ret_val['fls_state'] != 0) ) { $fls_ok = true; break; }
+}
 // b) reuser 'epk' and try get ext auth challange data
-$ret_val = false;
-$post_data = json_encode( array('epk' => $epk) );
-$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $post_data, $token_incorrect);
-if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 409 ) goto print_and_exit;                // expected 409 as FLS.1 is involved
-// c) reboot TOE to clear failer state - only possible way
+if ( $fls_ok ) {
+  $ret_val = false;
+  $post_data = json_encode( array('epk' => $epk) );
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/auth/ext/init", $ret_val, $post_data, $token_incorrect);
+  if ( $cfg_debug ) var_dump( $ret_val );
+  if ( $ret_stat != 409 ) $fls_ok = false;                    // expected 409 as FLS.1 is involved
+}
+// c) reboot TOE to clear failer state - only possible way; always, so a failed check does not leave the device in FLS
 $ret_val = false;
 $not_used = false;    //dummy
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $not_used, $token);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200 - all good
+if ( !helper_wait_reboot($cfg_domain) ) goto print_and_exit;    // DEV-502: wait for the new boot (the next test only had the 25 s pause of the runner)
+if ( !$fls_ok ) goto print_and_exit;                        // failure state not entered or the request not refused with 409
 // d) set result
 $test_cfg['subtests'][3] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
@@ -209,11 +222,12 @@ $test_cfg['subtests'][3] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Test summary      ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+test_summary:
 // if execution reach this point - all test are passed
 $check_passed = 0;
 $check_failed = 0;
 foreach($test_cfg['subtests'] as $no => $val) {
-  if ($val === 'OK') $check_passed++;
+  if (($val === 'OK') || ($val === 'SKIPPED (no DIAG)')) $check_passed++;   // a DIAG subtest skipped on a build without DIAG is not a failure
   else $check_failed++;
 }
 if ($check_failed == 0) $test_cfg['result'] = 'PASS';
@@ -225,7 +239,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 print_and_exit:
   $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
-  print_result( $test_cfg );  
+  print_result( $test_cfg );
   die;
 
 /////////////////////////////////////////////////////////////////////

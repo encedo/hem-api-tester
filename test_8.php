@@ -40,7 +40,7 @@ if ( intval($ret_val['fls_state']) !== 0) {
   goto print_and_exit;     // exit as well if prereq not fulfill
 }
 if ( isset($ret_val['hostname']) ) {                       // remap domain name to the correct one
-  $cfg_domain = $ret_val['hostname'];                      
+  $cfg_domain = $ret_val['hostname'];
 }
 if ($ret_val['fls_state'] != 0) goto print_and_exit;       // expected result - if fls_state = 0 means NO ERRORS detected
 // b) detect, get version details etc
@@ -83,6 +83,7 @@ do {
   } else break;
 } while( true);
 $test_finished_at = time();
+if ( isset($ret_val['kat_busy']) ) { echo "ERROR: KAT still busy after 240 s\n"; goto print_and_exit; }   // DEV-502 (T-8.1): only fls_state was checked
 if ($ret_val['fls_state'] != 0) goto print_and_exit;          // expected result if fls_state = 0 means NO ERRORS detected
 // f) set result
 $test_cfg['subtests'][1] = 'OK';                              // mark this subtest as OK
@@ -98,7 +99,8 @@ TEST2:
 echo "  subtest-2\n";
 if ($diag_mode == false) {
   echo "    No DIAG mode, subtest will be skipped.\n";
-  goto print_and_exit;
+  $test_cfg['subtests'][2] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
+  goto TEST3;
 }
 $test_cfg['subtests'][2] = 'ERROR';                           // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) dry-run of a status check over TLS
@@ -137,7 +139,7 @@ do {
     $err = error_get_last();
     //echo "    TLS ERROR: " . $err['message']. "\n";
     $failers_testB++;
-  } 
+  }
   $count++;
   if ($count >= 20) break;
   sleep(1);
@@ -171,24 +173,29 @@ Other test to perform. Enter:
 /////////////////////////////////////////////////////////////////////
 TEST3:
 echo "  subtest-3\n";
+if ($diag_mode == false) {
+  echo "    No DIAG mode, subtest will be skipped.\n";
+  $test_cfg['subtests'][3] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
+  goto TEST4;
+}
 $test_cfg['subtests'][3] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) check if back online
 $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 200 ) goto print_and_exit;                
+if ( $ret_stat != 200 ) goto print_and_exit;
 if ( $ret_val['fls_state'] != 0 ) goto print_and_exit;      //should not be in FLS state
 // b) set RTC clock - code from T-1.3
 $ret = helper_checkin($cfg_domain);
 if ($ret == false) goto print_and_exit;                     // exit on error
 // c) perform local USER authentication
-$token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");   
+$token = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
 if ($token == false) goto print_and_exit;                    // exit on error
 // d) trigger TRNG failer
 $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/diag/break_trng", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200 
+if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200
 $last_val = $ret_val['last_val'];
 //echo "    Shannon Entropy: $last_val\n";
 sleep(20);    //wait - TRNG is tested every 15sec
@@ -196,8 +203,8 @@ sleep(20);    //wait - TRNG is tested every 15sec
 $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 200 ) goto print_and_exit;                
-if ( $ret_val['fls_state'] == 0 ) goto print_and_exit;      //should be non zero (2 for TRNG)
+if ( $ret_stat != 200 ) goto print_and_exit;
+if ( (intval($ret_val['fls_state']) & 0x02) == 0 ) goto print_and_exit;      // expected: FLS bit 0x02 (TRNG)   DEV-499 (D2): was != 0 (any bit)
 // f) check new Shannon entropy test value
 $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/diag/break_trng", $ret_val);
@@ -223,15 +230,15 @@ if ( strstr($test_cfg['conf'], "EPA") ) {                   // on EPA reboot rem
     $ret_val = false;
     $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val);  //this should failed after 8sec
     if ( $cfg_debug ) var_dump( $ret_val );
-    if ( $ret_stat == 200 ) goto print_and_exit;              // expected is NO ANSWER == false     
+    if ( $ret_stat == 200 ) goto print_and_exit;              // expected is NO ANSWER == false
     readline("    Encedo PPA is shutdown! Unplug the device, wait 5sec and plug in again. Click Enter when done.");
-    sleep(30);                                           
+    sleep(30);
 }
 // h) check if back online
 $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 200 ) goto print_and_exit;                
+if ( $ret_stat != 200 ) goto print_and_exit;
 if ( $ret_val['fls_state'] != 0 ) goto print_and_exit;      //should not be in FLS state
 // i) gather sample of 2^24 bits on random bytes to run shannon test offsite
 $probe_size = 2*1024*1024; //ib bytes, equivalent of 2^24 in bits
@@ -239,9 +246,9 @@ $probe_buf = '';
 //echo date(DATE_RFC2822);
 do {
   $ret_val = false;
-  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/diag/test_trng", $ret_val);  
+  $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/diag/test_trng", $ret_val);
   //if ( $cfg_debug ) var_dump( $ret_val );
-  if ( $ret_stat != 200 ) goto print_and_exit;                
+  if ( $ret_stat != 200 ) goto print_and_exit;
   if (isset($ret_val['rnd'])) {
     $rnd = base64_decode($ret_val['rnd']);
     $probe_buf .= $rnd;
@@ -266,24 +273,29 @@ $test_cfg['subtests'][3] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 TEST4:
 echo "  subtest-4\n";
+if ($diag_mode == false) {
+  echo "    No DIAG mode, subtest will be skipped.\n";
+  $test_cfg['subtests'][4] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
+  goto TEST5;
+}
 $test_cfg['subtests'][4] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) check if back online
 $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 200 ) goto print_and_exit;                
+if ( $ret_stat != 200 ) goto print_and_exit;
 if ( $ret_val['fls_state'] != 0 ) goto print_and_exit;      //should not be in FLS state
 // b) set RTC clock - code from T-1.3
 $ret = helper_checkin($cfg_domain);
 if ($ret == false) goto print_and_exit;                     // exit on error
 // c) perform local USER authentication - config & key import & key list
-$token_cfg = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");   
+$token_cfg = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
 if ($token_cfg == false) goto print_and_exit;                    // exit on error
 //echo "  Token CONFIG: $token_cfg\n";
-$token_imp = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:imp");   
+$token_imp = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:imp");
 if ($token_imp == false) goto print_and_exit;                    // exit on error
 //echo "  Token IMPORT: $token_imp\n";
-$token_list = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");   
+$token_list = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");
 if ($token_list == false) goto print_and_exit;                    // exit on error
 //echo "  Token LIST: $token_list\n";
 // d) import a demo key
@@ -351,20 +363,20 @@ do {
     if ($counter > 24) break;   //wait max 10sec * 24times
   } else break;
 } while( true);
-if ($ret_val['fls_state'] == 0) goto print_and_exit;          // expected result if fls_state = 8 
+if ( (intval($ret_val['fls_state']) & 0x08) == 0 ) goto print_and_exit;      // expected: FLS bit 0x08 (key repository integrity; maskable by cc_mode 0x08 - T-2 sets cc_mode 0)   DEV-499 (D2)
 // j) wipe-out configuration - this error cannot be cleared or the key deleted (fls prohibits)
 $ret_val = false;
 $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/diag/wipe_config", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 200 ) goto print_and_exit;                
+if ( $ret_stat != 200 ) goto print_and_exit;
 sleep(30);
 //fix wipe out TLS certificate
 //only for PPA
 if (strcmp($test_cfg['conf'], "ENCEDO PPA") == 0) {
   $ret_val = false;
-  $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/config/attestation  ", $ret_val);
+  $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/config/attestation", $ret_val);
   if ( $cfg_debug ) var_dump( $ret_val );
-  if ( $ret_stat != 200 ) goto print_and_exit;                
+  if ( $ret_stat != 200 ) goto print_and_exit;
   $new_prefix = 'my';
   // ask for standard domain - a'ka public
   $post_array = array('genuine' => $ret_val['genuine']);
@@ -377,7 +389,6 @@ if (strcmp($test_cfg['conf'], "ENCEDO PPA") == 0) {
   //echo "update config\n";
   $ret_val = false;
   $post_data = json_encode( array('tls' => $cert_data) );
-  $token = $init_result['token'];
   $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data);
   if ( $cfg_debug ) var_dump( $ret_val );
   if ( $ret_stat != 200 ) goto print_and_exit;               // exit on API call FAIL
@@ -402,6 +413,11 @@ $test_cfg['subtests'][4] = 'OK';                            // mark this subtest
 /////////////////////////////////////////////////////////////////////
 TEST5:
 echo "  subtest-5\n";
+if ($diag_mode == false) {
+  echo "    No DIAG mode, subtest will be skipped.\n";
+  $test_cfg['subtests'][5] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
+  goto test_summary;
+}
 $test_cfg['subtests'][5] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) check if back online
 $cfg_domain = $default_domain;                              // restore default domain name
@@ -409,20 +425,20 @@ $cfg_domain = $default_domain;                              // restore default d
 $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 200 ) goto print_and_exit;                
+if ( $ret_stat != 200 ) goto print_and_exit;
 if ( $ret_val['fls_state'] != 0 ) goto print_and_exit;      //should not be in FLS state
 // b) simulate 'temp' out of range
 $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/diag/break_temp", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200 
-sleep(5); 
+if ( $ret_stat != 200 ) goto print_and_exit;                //expected is 200
+sleep(5);
 // e) recheck status
 $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);
 if ( $cfg_debug ) var_dump( $ret_val );
-if ( $ret_stat != 200 ) goto print_and_exit;                
-if ( $ret_val['fls_state'] == 0 ) goto print_and_exit;      //should be non zero (2 for TRNG)
+if ( $ret_stat != 200 ) goto print_and_exit;
+if ( (intval($ret_val['fls_state']) & 0x04) == 0 ) goto print_and_exit;      // expected: FLS bit 0x04 (temperature)   DEV-499 (D2): was != 0 (any bit), comment said TRNG
 // f) reboot TOE to clear failer state - only possible way
 $ret_val = false;
 $ret_stat = http_transaction("http", "GET", $cfg_domain, "/api/system/reboot", $ret_val);    //works without token as device is wipe-out
@@ -439,11 +455,12 @@ $test_cfg['subtests'][5] = 'OK';                           // mark this subtest 
 /////////////////////////////////////////////////////////////////////
 // Test summary      ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+test_summary:
 // if execution reach this point - all test are passed
 $check_passed = 0;
 $check_failed = 0;
 foreach($test_cfg['subtests'] as $no => $val) {
-  if ($val === 'OK') $check_passed++;
+  if (($val === 'OK') || ($val === 'SKIPPED (no DIAG)')) $check_passed++;   // a DIAG subtest skipped on a build without DIAG is not a failure
   else $check_failed++;
 }
 if ($check_failed == 0) $test_cfg['result'] = 'PASS';
@@ -455,7 +472,7 @@ if ($check_failed == 0) $test_cfg['result'] = 'PASS';
 print_and_exit:
   $test_cfg['elapsed'] = intval((hrtime(true) - $test_cfg['elapsed']) / 1000000);
   echo "\nTest summary:\n";
-  print_result( $test_cfg );  
+  print_result( $test_cfg );
   die;
 
 /////////////////////////////////////////////////////////////////////
