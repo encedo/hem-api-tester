@@ -2,13 +2,14 @@
 
 include "libs/lib.php";
 include "libs/hpke.php";   // DEV-503: PoP hpke (export-only HPKE)
+include "libs/extauth.php";   // DEV-511: authenticator side (13.9)
 include "config.php";
 
 
 // test name, descr & number of subtests
 $test_name = "T-13";
-$test_descr = "Attestation: JWT, key block, proof of possession";
-$test_subtest_cnt = 8;   // DEV-502: 8 = attest.encedo.com end to end
+$test_descr = "Attestation: JWT, key block, proof of possession, login context";
+$test_subtest_cnt = 9;   // DEV-502: 8 = attest.encedo.com end to end; DEV-511: 9 = login context
 
 
 // initialize the execution env
@@ -248,6 +249,46 @@ function t13_hpke_pub($type, $raw) {   // DEV-503: keymgmt/get pubkey -> HPKE Se
 }
 
 function t13_key_token($domain, $password, $kid) { return helper_authorize($domain, $password, "keymgmt:use:$kid"); }
+
+// DEV-511: POST with an Origin header (raw request - http_transaction sends no extra headers); returns the issued token or false
+function t13_post_origin($domain, $path, $req, $origin) {
+  $body = json_encode($req, JSON_UNESCAPED_SLASHES); $hdrs = false; $resp = false;
+  $stat = raw_https_request($domain, "POST $path HTTP/1.1\r\nHost: $domain\r\n" . (($origin !== false) ? "Origin: $origin\r\n" : "") . "Content-Type: application/json\r\nContent-Length: " . strlen($body) . "\r\nConnection: close\r\n\r\n" . $body, $hdrs, $resp);
+  $j = json_decode((string)$resp, true);
+  return ( ($stat == 200) && isset($j['token']) ) ? $j['token'] : false;
+}
+// DEV-511: local token as helper_authorize, requested with an Origin header
+function t13_authorize_origin($domain, $password, $scope, $origin) {
+  $ch = false;
+  if ( http_transaction("http", "GET", $domain, "/api/auth/token", $ch) != 200 ) return false;
+  $secret = hash_pbkdf2("sha256", $password, $ch['eid'], 600000, 32, true);
+  $iat = time() - 5;
+  $auth = ejwt_generate(array('jti' => $ch['jti'], 'aud' => $ch['spk'], 'exp' => $iat + 3600, 'iat' => $iat,
+                              'iss' => base64_encode(sodium_crypto_box_publickey_from_secretkey($secret)), 'scope' => $scope), $secret, base64_decode($ch['spk']));
+  return t13_post_origin($domain, "/api/auth/token", array('auth' => $auth), $origin);
+}
+// DEV-511: ext token through a paired app (libs/extauth.php): authreply as extauth_authreply + actx / ctx, sent with an Origin
+function t13_ext_token($domain, $app, $scope, $actx, $ctx, $origin) {
+  $a = false;
+  if ( extauth_request_direct($domain, $scope, $a) != 200 ) return false;
+  $m = extauth_session_key($app['aid_prv'], $app['eid'], $a['jti']);
+  $plain = extauth_unseal(@$a['scope'][$app['pid']], $m);
+  if ( $plain === false ) return false;
+  $now = time();
+  $claims = array('aud' => base64_encode($app['eid']), 'jti' => $a['jti'], 'exp' => $now + 900, 'iat' => $now, 'pid' => $app['pid'], 'iss' => base64_encode($app['aid']), 'scope' => extauth_seal($plain, $m));
+  if ( $actx !== false ) $claims['actx'] = $actx;
+  if ( $ctx !== false ) $claims['ctx'] = $ctx;
+  return t13_post_origin($domain, "/api/auth/ext/token", array('authreply' => ejwt_generate($claims, $app['aid_prv'], $app['eid'])), $origin);
+}
+function t13_claims($token) { return json_decode(t13_b64url_dec(explode('.', $token)[1]), true); }
+// DEV-511: the auth block of a device attestation made with $token, or an error string
+function t13_auth($domain, $token, $aud) {
+  $nonce = base64_encode(openssl_random_pseudo_bytes(32));
+  if ( ($s = t13_request($domain, $token, array('nonce' => $nonce, 'aud' => $aud), $jwt)) != 200 ) return "attestation: HTTP $s";
+  $body = t13_check_jwt($jwt, $aud, $nonce);
+  if ( !is_array($body) ) return "attestation: $body";
+  return is_array(@$body['auth']) ? $body['auth'] : "attestation without the auth block";
+}
 
 
 /////////////////////////////////////////////////////////////////////
@@ -732,6 +773,73 @@ if ( !$root_ok ) { echo "ERROR: $t13_av /v1/pki: HTTP $ret_stat, the pinned Ence
 // f) set result
 $test_cfg['subtests'][8] = 'OK';                            // mark this subtest as OK
 TEST8_END:
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 9        ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST9:
+echo "  subtest-9\n";
+$test_cfg['subtests'][9] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
+// DEV-511: login context - token claims org / upt / v / actx, attestation block auth; the CORS origin config must allow any origin ("*", default)
+$o1 = "https://t13.hem-api-tester.encedo.com";
+$o128 = "https://" . str_repeat("a", 60) . "." . str_repeat("b", 59);   // 128 chars - the org limit
+// a) local token with an Origin: org, upt, v; auth: v 1, mth pwd, no akid / actx, org, iat = token iat, age 0..60, tts bool
+$tok = t13_authorize_origin($cfg_domain, $cfg_passpharse, "keymgmt:list", $o1);
+if ( $tok === false ) { echo "ERROR: auth/token with Origin $o1 (CORS origin must allow it)\n"; goto print_and_exit; }
+$c = t13_claims($tok);
+if ( (@$c['org'] !== $o1) || !is_int(@$c['upt']) || (@$c['v'] !== 1) || isset($c['actx']) ) { echo "ERROR: local token claims " . json_encode($c) . "\n"; goto print_and_exit; }
+$au = t13_auth($cfg_domain, $tok, $aud);
+if ( !is_array($au) || (@$au['v'] !== 1) || (@$au['mth'] !== "pwd") || isset($au['akid']) || isset($au['actx']) || (@$au['org'] !== $o1) || (@$au['iat'] !== $c['iat'])
+     || !is_int(@$au['age']) || ($au['age'] < 0) || ($au['age'] > 60) || !is_bool(@$au['tts']) ) { echo "ERROR: auth block (local, Origin) " . json_encode($au) . "\n"; goto print_and_exit; }
+$tts = $au['tts'];
+// b) local token without an Origin (13.1, issued earlier): no org; age from the uptime, not smaller than the age of the newer token
+$au2 = t13_auth($cfg_domain, $token_any, $aud);
+if ( isset(t13_claims($token_any)['org']) || !is_array($au2) || isset($au2['org']) || (@$au2['mth'] !== "pwd") || !is_int(@$au2['age']) || ($au2['age'] < $au['age']) ) { echo "ERROR: auth block (local, no Origin) " . json_encode($au2) . "\n"; goto print_and_exit; }
+// c) Origin of 128 chars -> org; 129 chars -> token without org
+$tok = t13_authorize_origin($cfg_domain, $cfg_passpharse, "keymgmt:list", $o128);
+if ( ($tok === false) || (@t13_claims($tok)['org'] !== $o128) ) { echo "ERROR: Origin of 128 chars not in org\n"; goto print_and_exit; }
+$tok = t13_authorize_origin($cfg_domain, $cfg_passpharse, "keymgmt:list", $o128 . "b");
+if ( ($tok === false) || isset(t13_claims($tok)['org']) ) { echo "ERROR: Origin of 129 chars: no token, or org present\n"; goto print_and_exit; }
+// d) external authenticator (paired directly, libs/extauth.php): actx 1:1 in the token and in auth, mth ext, akid = hex of the KID in sub
+$token_cfg = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
+$app = false; $code_ok = false;
+if ( ($token_cfg == false) || (extauth_pair_direct($cfg_domain, $token_cfg, "T-13 login ctx", $app, $code_ok) != 200) ) { echo "ERROR: pairing the test authenticator\n"; goto print_and_exit; }
+$actx = array('app' => "T-13", 'op' => "attest", 'n' => 7, 'ok' => true);
+$tok = t13_ext_token($cfg_domain, $app, "keymgmt:list", $actx, false, $o1);
+if ( $tok === false ) { echo "ERROR: ext/token with actx\n"; goto print_and_exit; }
+$c = t13_claims($tok);
+$akid = bin2hex((string)base64_decode((string)@$c['sub']));
+if ( (@$c['actx'] !== $actx) || (@$c['org'] !== $o1) || (@$c['v'] !== 1) || !is_int(@$c['upt']) || (strlen($akid) != 32) ) { echo "ERROR: ext token claims " . json_encode($c) . "\n"; goto print_and_exit; }
+$au = t13_auth($cfg_domain, $tok, $aud);
+if ( !is_array($au) || (@$au['mth'] !== "ext") || (@$au['akid'] !== $akid) || (@$au['actx'] !== $actx) || (@$au['org'] !== $o1) || (@$au['tts'] !== $tts) ) { echo "ERROR: auth block (ext) " . json_encode($au) . "\n"; goto print_and_exit; }
+// e) actx not taken - 129 chars serialized, a string, an array: token issued without actx
+foreach (array("129 chars" => array('x' => str_repeat("a", 121)), "a string" => "T-13", "an array" => array(1, 2)) as $what => $v) {
+  $tok = t13_ext_token($cfg_domain, $app, "keymgmt:list", $v, false, false);
+  if ( ($tok === false) || array_key_exists('actx', t13_claims($tok)) ) { echo "ERROR: ext/token, actx $what: no token, or actx present\n"; goto print_and_exit; }
+}
+// f) the longest token: 8 x keymgmt:use:<kid>, ctx 64, org 128, actx 128 - issued and accepted (under the 2048 limit)
+$scopes = array();
+for ($i = 0; $i < 8; $i++) $scopes[] = "keymgmt:use:" . bin2hex(random_bytes(16));
+$actx = array('x' => str_repeat("a", 120));                 // 128 chars serialized - the actx limit
+$tok = t13_ext_token($cfg_domain, $app, $scopes, $actx, str_repeat("c", 64), $o128);
+if ( ($tok === false) || (@t13_claims($tok)['actx'] !== $actx) || (count((array)@t13_claims($tok)['scope']) != 8) ) { echo "ERROR: longest ext token\n"; goto print_and_exit; }
+echo "    longest token: " . strlen($tok) . " chars\n";
+if ( (strlen($tok) > 2048) || !is_array(t13_auth($cfg_domain, $tok, $aud)) ) { echo "ERROR: longest token not accepted\n"; goto print_and_exit; }
+// g) Authorization over 2048 chars -> 401 (refused before the decode)
+$ret_val = false;
+$ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config/attestation", $ret_val, json_encode(array('nonce' => $nonce, 'aud' => $aud)), $tok . str_repeat("A", 2049 - strlen($tok)));
+if ( $ret_stat != 401 ) { echo "ERROR: token of 2049 chars: HTTP $ret_stat (expected 401)\n"; goto print_and_exit; }
+// h) remove the test pairing: the paired app key has KID = akid (DELETE 200 also proves akid is the authenticator key)
+$token_keydel = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:del");
+$ret_val = false;
+$ret_stat = http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/$akid", $ret_val, $not_used, $token_keydel);
+if ( $ret_stat != 200 ) { echo "ERROR: delete of the test pairing $akid: HTTP $ret_stat\n"; goto print_and_exit; }
+// i) set result
+$test_cfg['subtests'][9] = 'OK';                            // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
