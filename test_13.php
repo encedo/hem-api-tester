@@ -268,9 +268,10 @@ function t13_authorize_origin($domain, $password, $scope, $origin) {
   return t13_post_origin($domain, "/api/auth/token", array('auth' => $auth), $origin);
 }
 // DEV-511: ext token through a paired app (libs/extauth.php): authreply as extauth_authreply + actx / ctx, sent with an Origin
-function t13_ext_token($domain, $app, $scope, $actx, $ctx, $origin) {
+function t13_ext_token($domain, $app, $scope, $actx, $ctx, $origin, $delay = 0) {
   $a = false;
   if ( extauth_request_direct($domain, $scope, $a) != 200 ) return false;
+  if ( $delay > 0 ) sleep($delay);   // DEV-511: time between the authreq and the approval in the app
   $m = extauth_session_key($app['aid_prv'], $app['eid'], $a['jti']);
   $plain = extauth_unseal(@$a['scope'][$app['pid']], $m);
   if ( $plain === false ) return false;
@@ -804,18 +805,20 @@ $tok = t13_authorize_origin($cfg_domain, $cfg_passpharse, "keymgmt:list", $o128)
 if ( ($tok === false) || (@t13_claims($tok)['org'] !== $o128) ) { echo "ERROR: Origin of 128 chars not in org\n"; goto print_and_exit; }
 $tok = t13_authorize_origin($cfg_domain, $cfg_passpharse, "keymgmt:list", $o128 . "b");
 if ( ($tok === false) || isset(t13_claims($tok)['org']) ) { echo "ERROR: Origin of 129 chars: no token, or org present\n"; goto print_and_exit; }
-// d) external authenticator (paired directly, libs/extauth.php): actx 1:1 in the token and in auth, mth ext, akid = hex of the KID in sub
+// d) external authenticator (paired directly, libs/extauth.php): actx 1:1 in the token and in auth, mth ext, akid = hex of the KID in sub;
+//    approval 5 s after the authreq -> age >= 5 (age from the authreq, not from ext/token)
 $token_cfg = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
 $app = false; $code_ok = false;
 if ( ($token_cfg == false) || (extauth_pair_direct($cfg_domain, $token_cfg, "T-13 login ctx", $app, $code_ok) != 200) ) { echo "ERROR: pairing the test authenticator\n"; goto print_and_exit; }
-$actx = array('app' => "T-13", 'op' => "attest", 'n' => 7, 'ok' => true);
-$tok = t13_ext_token($cfg_domain, $app, "keymgmt:list", $actx, false, $o1);
+$actx = array('v' => 1, 'lock' => "bio+pin", 'uva' => 12, 'aos' => "android", 'app' => "2.0.3", 'hw' => true);   // spec A1 (example of F3, os -> aos)
+$tok = t13_ext_token($cfg_domain, $app, "keymgmt:list", $actx, false, $o1, 5);
 if ( $tok === false ) { echo "ERROR: ext/token with actx\n"; goto print_and_exit; }
 $c = t13_claims($tok);
 $akid = bin2hex((string)base64_decode((string)@$c['sub']));
 if ( (@$c['actx'] !== $actx) || (@$c['org'] !== $o1) || (@$c['v'] !== 1) || !is_int(@$c['upt']) || (strlen($akid) != 32) ) { echo "ERROR: ext token claims " . json_encode($c) . "\n"; goto print_and_exit; }
 $au = t13_auth($cfg_domain, $tok, $aud);
-if ( !is_array($au) || (@$au['mth'] !== "ext") || (@$au['akid'] !== $akid) || (@$au['actx'] !== $actx) || (@$au['org'] !== $o1) || (@$au['tts'] !== $tts) ) { echo "ERROR: auth block (ext) " . json_encode($au) . "\n"; goto print_and_exit; }
+if ( !is_array($au) || (@$au['mth'] !== "ext") || (@$au['akid'] !== $akid) || (@$au['actx'] !== $actx) || (@$au['org'] !== $o1) || (@$au['tts'] !== $tts)
+     || (@$au['iat'] !== $c['iat']) || !is_int(@$au['age']) || ($au['age'] < 5) || ($au['age'] > 65) ) { echo "ERROR: auth block (ext) " . json_encode($au) . "\n"; goto print_and_exit; }
 // e) actx not taken - 129 chars serialized, a string, an array: token issued without actx
 foreach (array("129 chars" => array('x' => str_repeat("a", 121)), "a string" => "T-13", "an array" => array(1, 2)) as $what => $v) {
   $tok = t13_ext_token($cfg_domain, $app, "keymgmt:list", $v, false, false);
@@ -824,7 +827,7 @@ foreach (array("129 chars" => array('x' => str_repeat("a", 121)), "a string" => 
 // f) the longest token: 8 x keymgmt:use:<kid>, ctx 64, org 128, actx 128 - issued and accepted (under the 2048 limit)
 $scopes = array();
 for ($i = 0; $i < 8; $i++) $scopes[] = "keymgmt:use:" . bin2hex(random_bytes(16));
-$actx = array('x' => str_repeat("a", 120));                 // 128 chars serialized - the actx limit
+$actx = array('x' => str_repeat("a", 120));                 // 128 chars serialized - the actx limit (size probe, not an A1 object; the HEM does not interpret actx)
 $tok = t13_ext_token($cfg_domain, $app, $scopes, $actx, str_repeat("c", 64), $o128);
 if ( ($tok === false) || (@t13_claims($tok)['actx'] !== $actx) || (count((array)@t13_claims($tok)['scope']) != 8) ) { echo "ERROR: longest ext token\n"; goto print_and_exit; }
 echo "    longest token: " . strlen($tok) . " chars\n";
