@@ -47,9 +47,11 @@ function extauth_pairing_reply($app, $req, $label) {
 }
 
 // authreply for an access request: jti from the request, scope sealed with its session key ($app needs aid_prv, aid, eid, pid)
-function extauth_authreply($app, $jti, $sealed, $period = 900) {
+// DEV-514: $ctx !== false -> claim ctx (FW 1.3: must be the ctx of the ext/request, bound into its jti)
+function extauth_authreply($app, $jti, $sealed, $period = 900, $ctx = false) {
   $now = time();
   $claims = array('aud' => base64_encode($app['eid']), 'jti' => $jti, 'exp' => $now + $period, 'iat' => $now, 'pid' => $app['pid'], 'iss' => base64_encode($app['aid']), 'scope' => $sealed);
+  if ($ctx !== false) $claims['ctx'] = $ctx;
   return ejwt_generate($claims, $app['aid_prv'], $app['eid']);
 }
 
@@ -78,19 +80,22 @@ function extauth_pair_direct($domain, $token, $label, &$app, &$code_ok, $pid_len
   return $ret_stat;
 }
 
-// access request (no token): returns the HTTP status, $authreq gets the authreq payload
-function extauth_request_direct($domain, $scope, &$authreq) {
+// access request (no token): returns the HTTP status, $authreq gets the authreq payload; DEV-514: $ctx / $note !== false -> sent in the request
+function extauth_request_direct($domain, $scope, &$authreq, $ctx = false, $note = false) {
   $ret_val = false;
-  $post_data = json_encode(array('epk' => base64_encode(sodium_crypto_scalarmult_base(random_bytes(32))), 'scope' => $scope));
+  $req = array('epk' => base64_encode(sodium_crypto_scalarmult_base(random_bytes(32))), 'scope' => $scope);
+  if ($ctx !== false) $req['ctx'] = $ctx;
+  if ($note !== false) $req['note'] = $note;
+  $post_data = json_encode($req);
   $ret_stat = http_transaction("https", "POST", $domain, "/api/auth/ext/request", $ret_val, $post_data);
   $authreq = ($ret_stat == 200) ? extauth_payload($ret_val['authreq']) : false;
   return $ret_stat;
 }
 
 // authreply to /api/auth/ext/token: returns the HTTP status, $token gets the issued token (false if none)
-function extauth_token_direct($domain, $app, $jti, $sealed, &$token, $period = 900) {
+function extauth_token_direct($domain, $app, $jti, $sealed, &$token, $period = 900, $ctx = false) {   // DEV-514: $ctx as in extauth_authreply
   $ret_val = false;
-  $post_data = json_encode(array('authreply' => extauth_authreply($app, $jti, $sealed, $period)));
+  $post_data = json_encode(array('authreply' => extauth_authreply($app, $jti, $sealed, $period, $ctx)));
   $ret_stat = http_transaction("https", "POST", $domain, "/api/auth/ext/token", $ret_val, $post_data);
   $token = isset($ret_val['token']) ? $ret_val['token'] : false;
   return $ret_stat;

@@ -9,7 +9,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-13";
 $test_descr = "Attestation: JWT, key block, proof of possession, login context";
-$test_subtest_cnt = 9;   // DEV-502: 8 = attest.encedo.com end to end; DEV-511: 9 = login context
+$test_subtest_cnt = 10;   // DEV-502: 8 = attest.encedo.com end to end; DEV-511: 9 = login context; DEV-514: 10 = ext ctx bound to the request
 
 
 // initialize the execution env
@@ -270,7 +270,7 @@ function t13_authorize_origin($domain, $password, $scope, $origin) {
 // DEV-511: ext token through a paired app (libs/extauth.php): authreply as extauth_authreply + actx / ctx, sent with an Origin
 function t13_ext_token($domain, $app, $scope, $actx, $ctx, $origin, $delay = 0) {
   $a = false;
-  if ( extauth_request_direct($domain, $scope, $a) != 200 ) return false;
+  if ( extauth_request_direct($domain, $scope, $a, $ctx) != 200 ) return false;   // DEV-514: the authreply ctx must be the one of the request (jti MAC)
   if ( $delay > 0 ) sleep($delay);   // DEV-511: time between the authreq and the approval in the app
   $m = extauth_session_key($app['aid_prv'], $app['eid'], $a['jti']);
   $plain = extauth_unseal(@$a['scope'][$app['pid']], $m);
@@ -810,7 +810,7 @@ if ( ($tok === false) || isset(t13_claims($tok)['org']) ) { echo "ERROR: Origin 
 $token_cfg = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
 $app = false; $code_ok = false;
 if ( ($token_cfg == false) || (extauth_pair_direct($cfg_domain, $token_cfg, "T-13 login ctx", $app, $code_ok) != 200) ) { echo "ERROR: pairing the test authenticator\n"; goto print_and_exit; }
-$actx = array('v' => 1, 'lock' => "bio+pin", 'uva' => 12, 'aos' => "android", 'app' => "2.0.3", 'hw' => true);   // spec A1 (example of F3, os -> aos)
+$actx = array('v' => 1, 'lock' => "bio+pin", 'uva' => 12, 'aos' => "android", 'app' => "2.0.0+f2e77e5", 'hw' => "sb", 'uvm' => "bio");   // spec A1 as sent by the authenticator (docs/PROTOCOL.md f2e77e5: hw sb / tee / sw / kc, uvm bio / pin / none)
 $tok = t13_ext_token($cfg_domain, $app, "keymgmt:list", $actx, false, $o1, 5);
 if ( $tok === false ) { echo "ERROR: ext/token with actx\n"; goto print_and_exit; }
 $c = t13_claims($tok);
@@ -843,6 +843,61 @@ $ret_stat = http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delet
 if ( $ret_stat != 200 ) { echo "ERROR: delete of the test pairing $akid: HTTP $ret_stat\n"; goto print_and_exit; }
 // i) set result
 $test_cfg['subtests'][9] = 'OK';                            // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 10       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST10:
+echo "  subtest-10\n";
+$test_cfg['subtests'][10] = 'ERROR';                        // mark this subtest default as ERROR - initialization as subtest is ongoing
+// DEV-514: the ctx of ext/request is bound into its jti MAC - the authreply must carry the same ctx (UTF-8 bytes, 1..64), otherwise
+// ext/token -> 401 without consuming the jti; note is one-way (not echoed, not checked)
+$token_cfg = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
+$app = false; $code_ok = false;
+if ( ($token_cfg == false) || (extauth_pair_direct($cfg_domain, $token_cfg, "T-13 ctx bind", $app, $code_ok) != 200) ) { echo "ERROR: pairing the test authenticator\n"; goto print_and_exit; }
+$ctx = "oidc;uv=bio;t=13.10";
+// a) request with ctx and note; the same jti: no ctx, another ctx, ctx + 1 char, 65 bytes, a number -> 401 each (jti not consumed)
+$a = false;
+if ( extauth_request_direct($cfg_domain, "keymgmt:list", $a, $ctx, "T-13.10 note") != 200 ) { echo "ERROR: ext/request with ctx and note\n"; goto print_and_exit; }
+$m = extauth_session_key($app['aid_prv'], $app['eid'], $a['jti']);
+$plain = extauth_unseal(@$a['scope'][$app['pid']], $m);
+if ( ($plain === false) || (@$a['ctx'] !== $ctx) ) { echo "ERROR: authreq: scope not sealed for the app, or ctx not in the authreq\n"; goto print_and_exit; }
+$sealed = extauth_seal($plain, $m);
+foreach (array("no ctx" => false, "another ctx" => "oidc;uv=pin;t=13.10", "ctx + 1 char" => $ctx . "x", "65 bytes" => str_repeat("c", 65), "a number" => 1310) as $what => $v) {
+  $t = false;
+  if ( ($s = extauth_token_direct($cfg_domain, $app, $a['jti'], $sealed, $t, 900, $v)) != 401 ) { echo "ERROR: ext/token, $what: HTTP $s (expected 401)\n"; goto print_and_exit; }
+}
+// b) the same jti with the requested ctx -> 200, token ctx = the requested one; again -> 401 (single use)
+$t = false;
+if ( ($s = extauth_token_direct($cfg_domain, $app, $a['jti'], $sealed, $t, 900, $ctx)) != 200 ) { echo "ERROR: ext/token, the requested ctx after the refused ones: HTTP $s\n"; goto print_and_exit; }
+if ( @t13_claims($t)['ctx'] !== $ctx ) { echo "ERROR: token ctx " . json_encode(@t13_claims($t)['ctx']) . " (expected $ctx)\n"; goto print_and_exit; }
+if ( ($s = extauth_token_direct($cfg_domain, $app, $a['jti'], $sealed, $t, 900, $ctx)) != 401 ) { echo "ERROR: ext/token replayed: HTTP $s (expected 401)\n"; goto print_and_exit; }
+// c) request without ctx: an authreply with a ctx -> 401, without -> 200 and no ctx in the token
+$a = false;
+if ( extauth_request_direct($cfg_domain, "keymgmt:list", $a) != 200 ) { echo "ERROR: ext/request without ctx\n"; goto print_and_exit; }
+$m = extauth_session_key($app['aid_prv'], $app['eid'], $a['jti']);
+$sealed = extauth_seal(extauth_unseal(@$a['scope'][$app['pid']], $m), $m);
+$t = false;
+if ( ($s = extauth_token_direct($cfg_domain, $app, $a['jti'], $sealed, $t, 900, $ctx)) != 401 ) { echo "ERROR: ext/token, ctx added: HTTP $s (expected 401)\n"; goto print_and_exit; }
+if ( (($s = extauth_token_direct($cfg_domain, $app, $a['jti'], $sealed, $t, 900)) != 200) || array_key_exists('ctx', t13_claims($t)) ) { echo "ERROR: ext/token without ctx: HTTP $s, or ctx in the token\n"; goto print_and_exit; }
+// d) limits in UTF-8 bytes: 32 x "é" (64 B) accepted and bound; 33 x "é" (66 B, 33 chars) -> 400 at ext/request
+$u = str_repeat("\xC3\xA9", 32);
+$tok = t13_ext_token($cfg_domain, $app, "keymgmt:list", false, $u, false);
+if ( ($tok === false) || (@t13_claims($tok)['ctx'] !== $u) ) { echo "ERROR: ctx of 64 UTF-8 bytes: no token, or a different ctx\n"; goto print_and_exit; }
+$a = false;
+if ( ($s = extauth_request_direct($cfg_domain, "keymgmt:list", $a, $u . "\xC3\xA9")) != 400 ) { echo "ERROR: ext/request, ctx of 66 UTF-8 bytes: HTTP $s (expected 400)\n"; goto print_and_exit; }
+// e) remove the test pairing (KID of the app key = akid of its token)
+$akid = bin2hex((string)base64_decode((string)@t13_claims($tok)['sub']));
+$token_keydel = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:del");
+$ret_val = false;
+$ret_stat = http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/$akid", $ret_val, $not_used, $token_keydel);
+if ( $ret_stat != 200 ) { echo "ERROR: delete of the test pairing $akid: HTTP $ret_stat\n"; goto print_and_exit; }
+// f) set result
+$test_cfg['subtests'][10] = 'OK';                           // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
