@@ -27,7 +27,7 @@ What every test checks, its subtests, the options and cases tried and the HEM en
 | [T-13](#t-13--attestation-jwt-key-block-proof-of-possession) | Attestation: JWT, key block, proof of possession, login context | `test_13.php` | 10 |
 | [T-14](#t-14--key-derivation-interoperability) | Key derivation interoperability | `test_14.php` | 4 |
 | [T-15](#t-15--input-validation-and-robustness) | Input validation and robustness | `test_15.php` | 17 |
-| [T-16](#t-16--device-policy-set-at-personalisation) | Device policy set at personalisation | `test_16.php` | 3 |
+| [T-16](#t-16--device-policy-set-at-personalisation) | Device policy set at personalisation | `test_16.php` | 4 |
 
 ## T-0 — Performance tests
 
@@ -297,7 +297,7 @@ Sends malformed input (DEV-438) and checks that each case gets the expected erro
 
 ## T-16 — Device policy set at personalisation
 
-**File:** `test_16.php` · **Subtests:** 3 · **Preconditions:** any init state (`wipeout.php` wipes an initialised TOE first); FW with the device policy (DEV-447); internet access to api.encedo.com (checkin, domain registration and TLS certificate) as T-2; run from the tester directory (calls `php wipeout.php` and `php test_2.php`); destructive and long: the TOE is wiped and personalised again 3 times (all keys gone, run T-10 again before T-11) plus a reboot in 16.2
+**File:** `test_16.php` · **Subtests:** 4 · **Preconditions:** any init state (`wipeout.php` wipes an initialised TOE first); FW with the device policy (DEV-447); internet access to api.encedo.com (checkin, domain registration and TLS certificate) as T-2; run from the tester directory (calls `php wipeout.php` and `php test_2.php`); destructive and long: the TOE is wiped and personalised again 3 times (all keys gone, run T-10 again before T-11) plus a reboot in 16.2
 
 Checks the device policy (DEV-447). `policy` is set only at personalisation (`POST /api/auth/init`), so every variant runs `wipeout.php` (classic wipe) and `test_2.php` with `ENCEDO_T2_POLICY` = the policy array (JSON); without it T-2 enables all three (`raw_ecdh_enabled`, `pubkey_in_search`, `pubkey_in_list`). Each variant then checks the policy-dependent behaviour: checkin, tokens `system:config`, `keymgmt:gen`, `keymgmt:list`, `keymgmt:search`, two new SECP256R1 ECDH keys; GET config `policy` equals the variant; raw ECDH 200 with `raw_ecdh_enabled`, else 403; ECDH with `alg` SHA2-256 always 200; HKDF-SHA2-256 with the reserved `hkdf_ctx` prefix `encedo-derive:v1:` always 400; `keymgmt/search` with `return_pubkey` and `GET keymgmt/list/0/15/pubkey` give public keys only with `pubkey_in_search` / `pubkey_in_list` (otherwise the flag / segment is ignored, still 200); POST config with `policy` always 400. The test ends with a plain T-2, the state the other tests expect.
 
@@ -306,8 +306,9 @@ Checks the device policy (DEV-447). `policy` is set only at personalisation (`PO
 | 16.1 | Policies off | Status (waits until the TOE answers), version (http); wipeout + T-2 with policy `[]`; policy checks | T-2 PASS; policy `[]`; raw ECDH 403; ECDH SHA2-256 200; reserved hkdf_ctx 400; no public keys in search / list; POST config policy 400 |
 | 16.2 | One policy, survives a reboot | wipeout + T-2 with `["pubkey_in_list"]`; policy checks; `GET /api/system/reboot` (`system:config` token), wait; policy checks again | T-2 PASS; policy `["pubkey_in_list"]`; raw ECDH 403; public keys in list/0/15/pubkey only, not in search; the same after the reboot |
 | 16.3 | Policies on (T-2 default) | wipeout + plain T-2 (no `ENCEDO_T2_POLICY`); policy checks; leaves the TOE personalised as the other tests expect | T-2 PASS; policy = all three; raw ECDH 200; public keys in search and list; reserved hkdf_ctx 400; POST config policy 400 |
+| 16.4 | Corrupted policy word (DIAG-only) | Checkin, tokens `system:config`, `keymgmt:list`; `GET /api/diag/policy_corrupt/4` (no token); GET config (a policy read); poll `GET /api/system/status` every 1 s, up to 10 s, for `fls_state` != 0; `GET /api/crypto/random/32`; reboot (always), wait; status again | `policy_corrupt` 200; `fls_state` 8 (configuration error, DEV-515; was 16); random 409; after the reboot `fls_state` 0. Without DIAG: `SKIPPED (no DIAG)` (counts as passed) |
 
-**Endpoints:** `GET /api/system/status` (http), `GET /api/system/version` (http), `GET /api/system/checkin` (http), `POST https://api.encedo.com/checkin`, `POST /api/system/checkin` (http), `GET /api/auth/token` + `POST /api/auth/token` (http, helper_authorize), `GET /api/system/config`, `POST /api/system/config`, `POST /api/keymgmt/create`, `GET /api/keymgmt/get/{kid}`, `POST /api/crypto/ecdh`, `POST /api/keymgmt/search`, `GET /api/keymgmt/list/0/15/pubkey`, `GET /api/system/reboot` (all https unless stated otherwise); plus the endpoints of `wipeout.php` (see Tools) and T-2
+**Endpoints:** `GET /api/system/status` (http), `GET /api/system/version` (http), `GET /api/system/checkin` (http), `POST https://api.encedo.com/checkin`, `POST /api/system/checkin` (http), `GET /api/auth/token` + `POST /api/auth/token` (http, helper_authorize), `GET /api/system/config`, `POST /api/system/config`, `POST /api/keymgmt/create`, `GET /api/keymgmt/get/{kid}`, `POST /api/crypto/ecdh`, `POST /api/keymgmt/search`, `GET /api/keymgmt/list/0/15/pubkey`, `GET /api/system/reboot`, `GET /api/diag/policy_corrupt/{slot}` (DIAG), `GET /api/crypto/random/32` (all https unless stated otherwise); plus the endpoints of `wipeout.php` (see Tools) and T-2
 
 ## Tools
 

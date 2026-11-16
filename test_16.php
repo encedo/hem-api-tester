@@ -7,7 +7,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-16";
 $test_descr = "Device policy set at personalisation";
-$test_subtest_cnt = 3;
+$test_subtest_cnt = 4;
 
 
 // initialize the execution env
@@ -175,13 +175,59 @@ $test_cfg['subtests'][3] = 'OK';                            // mark this subtest
 
 
 /////////////////////////////////////////////////////////////////////
+// Subtest: 4        ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST4:
+echo "  subtest-4\n";
+if ( strstr($test_cfg['fwv'], "-DIAG") == false ) {
+  echo "    No DIAG mode, subtest will be skipped.\n";
+  $test_cfg['subtests'][4] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
+  goto test_summary;
+}
+$test_cfg['subtests'][4] = 'ERROR';                         // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) corrupted policy word (DIAG) -> configuration error FLS 0x08 (DEV-515, was 0x10), crypto refused 409
+if ( helper_checkin($cfg_domain) == false ) goto print_and_exit;
+$tc = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
+$tl = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");
+if ( !$tc || !$tl ) goto print_and_exit;
+$ret_val = false;
+if ( http_transaction("https", "GET", $cfg_domain, "/api/diag/policy_corrupt/4", $ret_val) != 200 ) goto print_and_exit;
+$ret_val = false; $not_used = false;
+http_transaction("https", "GET", $cfg_domain, "/api/system/config", $ret_val, $not_used, $tc);   // a policy read
+$fls = -1;
+for ($i = 0; $i < 10; $i++) {                               // poll up to 10 s
+  $ret_val = false;
+  if ( (http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val) == 200) && (intval($ret_val['fls_state']) != 0) ) { $fls = intval($ret_val['fls_state']); break; }
+  sleep(1);
+}
+$ret_val = false;
+$st = http_transaction("https", "GET", $cfg_domain, "/api/crypto/random/32", $ret_val, $not_used, $tl);
+// b) reboot restores the flash copy - always, so a failed check does not leave the device in FLS
+$ret_val = false;
+if ( http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $not_used, $tc) != 200 ) goto print_and_exit;
+if ( !helper_wait_reboot($cfg_domain) ) goto print_and_exit;
+if ( $fls != 0x08 ) { echo "ERROR: fls_state after policy_corrupt: $fls (expected 8)\n"; goto print_and_exit; }
+if ( $st != 409 ) { echo "ERROR: crypto/random in FLS: HTTP $st (expected 409)\n"; goto print_and_exit; }
+$ret_val = false;
+if ( http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val) != 200 ) goto print_and_exit;
+if ( intval($ret_val['fls_state']) != 0 ) { echo "ERROR: fls_state after reboot: " . $ret_val['fls_state'] . "\n"; goto print_and_exit; }
+helper_checkin($cfg_domain);                                // tokens work again for the next test
+// c) set result
+$test_cfg['subtests'][4] = 'OK';                            // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
 // Test summary      ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+test_summary:
 // if execution reach this point - all test are passed
 $check_passed = 0;
 $check_failed = 0;
 foreach($test_cfg['subtests'] as $no => $val) {
-  if ($val === 'OK') $check_passed++;
+  if (($val === 'OK') || ($val === 'SKIPPED (no DIAG)')) $check_passed++;   // a DIAG subtest skipped on a build without DIAG is not a failure
   else $check_failed++;
 }
 if ($check_failed == 0) $test_cfg['result'] = 'PASS';
