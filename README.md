@@ -27,7 +27,7 @@ Using
    
    `cd hem-api-tester`
 
-   Branches: `fw-1.3.x` - tests for FW 1.3.x; `main` - tests for FW 1.2.x (also tagged `fw-1.2.x`). For FW 1.3.x: `git checkout fw-1.3.x`.
+   Branches: `main` - tests for FW 1.3.x; tests for FW 1.2.x: tag `fw-1.2.x` (`git checkout fw-1.2.x`).
 
 5. Run first test - e.g. to test Encedo PPA.
 
