@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 18;   // DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay
+$test_subtest_cnt = 19;   // DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length
 
 
 // initialize the execution env
@@ -897,6 +897,44 @@ if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // c) set result
 $test_cfg['subtests'][18] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 19       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST19:
+echo "  subtest-19\n";
+$test_cfg['subtests'][19] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-519 (M2, H11): JWTs whose segments do not decode - an empty header / body segment, a header segment of 7000 chars in
+//    a request body - are refused as any bad JWT; the TOE stays out of the failure state (fls_state 0) and does not restart
+//    (before: an empty segment set fls_state 0x10 until reboot, the long segment overflowed the worker stack - restart, 0x20)
+$cases = array();
+$ret_val = false;
+$cases[] = array("auth/token, JWT with an empty header", http_transaction("http", "POST", $cfg_domain, "/api/auth/token", $ret_val, json_encode(array('auth' => ".e30.AAAA"))), 401);
+$ret_val = false;
+$cases[] = array("auth/token, JWT with an empty body", http_transaction("http", "POST", $cfg_domain, "/api/auth/token", $ret_val, json_encode(array('auth' => "eyJhbGciOiJIUzI1NiJ9..AAAA"))), 401);
+$cases[] = array("bearer JWT with an empty header", raw_https_request($cfg_domain, "GET /api/system/config HTTP/1.1\r\nHost: $cfg_domain\r\nAuthorization: Bearer .e30.AAAA\r\nConnection: close\r\n\r\n"), 401);
+$ret_val = false;
+$cases[] = array("checkin, JWT header segment of 7000 chars", http_transaction("http", "POST", $cfg_domain, "/api/system/checkin", $ret_val, json_encode(array('checked' => str_repeat("A", 7000) . ".e30.AAAA"))), 401);
+if ( !check_cases($cases) ) goto print_and_exit;
+$ret_val = false;
+if ( (http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val) != 200) || (@$ret_val['fls_state'] != 0) ) { echo "    fls_state " . @$ret_val['fls_state'] . " after the JWT cases, expected 0\n"; goto print_and_exit; }
+if ( !check_alive($uptime) ) goto print_and_exit;
+// b) DEV-519 (M3, M1): a folded header line (obs-fold) and an Origin over 256 chars are refused with 400 and the connection
+//    closed (before: the folded line was served after a write through NULL; any Origin length was copied and echoed - over http
+//    the headers outgrew the 2920 B buffer and bytes past it were sent); an Origin of 256 chars is still served (origin "*")
+$o = "https://" . str_repeat("a", 248);                       // 256 chars
+$cases = array();
+$cases[] = array("folded header line", raw_https_request($cfg_domain, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nX-Test: a\r\n b\r\nConnection: close\r\n\r\n"), 400);
+$cases[] = array("Origin of 256 chars", raw_https_request($cfg_domain, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nOrigin: $o\r\nConnection: close\r\n\r\n"), 200);
+$cases[] = array("Origin of 257 chars", raw_https_request($cfg_domain, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nOrigin: " . $o . "a\r\nConnection: close\r\n\r\n"), 400);
+$cases[] = array("Origin of 2780 chars", raw_https_request($cfg_domain, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nOrigin: https://" . str_repeat("b", 2772) . "\r\nConnection: close\r\n\r\n"), 400);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// c) set result
+$test_cfg['subtests'][19] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////

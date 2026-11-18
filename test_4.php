@@ -113,13 +113,16 @@ if ( ($ret_stat == 200) && ($ret_val['updated'] == true) ) {
     $hdrs = false;
     $stat = raw_https_request($cfg_domain, "OPTIONS /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nOrigin: " . $c[0] . "\r\nAccess-Control-Request-Method: GET\r\nConnection: close\r\n\r\n", $hdrs);
     if ( $cfg_debug ) var_dump( $c[0], $stat, $hdrs );
-    if ( ($stat != $c[1]) || (($c[1] == 204) && (@$hdrs['access-control-allow-origin'] !== $c[0])) ) {
+    if ( ($stat != $c[1]) || (($c[1] == 204) && (@$hdrs['access-control-allow-origin'] !== $c[0]))
+         || (($c[1] == 412) && isset($hdrs['access-control-allow-origin'])) ) {   // DEV-519 (M1): a refused origin is not echoed
       echo "    CORS preflight from " . $c[0] . ": HTTP $stat, expected " . $c[1] . "\n";
       $cors_ok = false;
     }
   }
-  $stat = raw_https_request($cfg_domain, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nOrigin: https://cors-y.hem-api-tester.encedo.com\r\nConnection: close\r\n\r\n");
+  $hdrs = false;
+  $stat = raw_https_request($cfg_domain, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nOrigin: https://cors-y.hem-api-tester.encedo.com\r\nConnection: close\r\n\r\n", $hdrs);
   if ( $stat != 412 ) { echo "    GET from an origin not on the list: HTTP $stat, expected 412\n"; $cors_ok = false; }
+  if ( isset($hdrs['access-control-allow-origin']) ) { echo "    GET from an origin not on the list: the origin is echoed\n"; $cors_ok = false; }   // DEV-519 (M1)
   $ret_val = false;
   $stat = http_transaction("https", "GET", $cfg_domain, "/api/system/status", $ret_val);     // no Origin header
   if ( $stat != 200 ) { echo "    GET without Origin: HTTP $stat, expected 200\n"; $cors_ok = false; }
