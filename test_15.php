@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 21;   // DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI manifest; 21 pairing descr, token lifetime, nonce order
+$test_subtest_cnt = 22;   // DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI manifest; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close
 
 
 // initialize the execution env
@@ -1140,6 +1140,59 @@ if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // f) set result
 $test_cfg['subtests'][21] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 22       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST22:
+echo "  subtest-22
+";
+$test_cfg['subtests'][22] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-519 (L1): a stored AES key is used only at its own size - a shorter alg (AES128 / AES192 with an AES256 key) was a key cut
+//    from the stored one (encrypt, decrypt, wrap, unwrap); now 400
+$token_gen = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:gen");
+$token_del = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:del");
+if ( ($token_gen == false) || ($token_del == false) ) goto print_and_exit;
+$ret_val = false;
+$post_data = json_encode( array('label' => "T-15.22 AES256 " . bin2hex(random_bytes(3)), 'type' => "AES256", 'descr' => base64_encode("CCTEST:T-15.22")) );
+if ( http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_gen) != 200 ) goto print_and_exit;
+$kid_aes = $ret_val['kid'];
+$token_aes = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid_aes");
+if ($token_aes == false) goto print_and_exit;
+$msg = base64_encode(random_bytes(32));
+$cases = array();
+foreach (array("AES256-CBC" => 200, "AES128-CBC" => 400, "AES192-CBC" => 400) as $alg => $exp) {
+  $ret_val = false;
+  $cases[] = array("cipher/encrypt AES256 key, alg $alg", http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/encrypt", $ret_val, json_encode(array('kid' => $kid_aes, 'msg' => $msg, 'alg' => $alg)), $token_aes), $exp);
+}
+$ret_val = false;
+$cases[] = array("cipher/wrap AES256 key, alg AES256", http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/wrap", $ret_val, json_encode(array('kid' => $kid_aes, 'msg' => $msg, 'alg' => "AES256")), $token_aes), 200);
+$ret_val = false;
+$cases[] = array("cipher/wrap AES256 key, alg AES128", http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/wrap", $ret_val, json_encode(array('kid' => $kid_aes, 'msg' => $msg, 'alg' => "AES128")), $token_aes), 400);
+$ret_val = false;
+$not_used = false;
+http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/$kid_aes", $ret_val, $not_used, $token_del);
+// b) DEV-519 (L13): an upload refused with 406 because its body did not all arrive closes the connection - the rest of the body,
+//    sent later, was read as the next request on a kept-alive connection
+$token_upg = helper_authorize($cfg_domain, $cfg_passpharse, "system:upgrade");
+if ($token_upg == false) goto print_and_exit;
+$sock = raw_https_connect($cfg_domain);
+if ($sock == false) goto print_and_exit;
+$part = random_bytes(1024);
+$hdrs = false;
+$st = raw_https_transaction($sock, "POST /api/system/upgrade/upload_fw HTTP/1.1\r\nHost: $cfg_domain\r\nAuthorization: Bearer $token_upg\r\nContent-Disposition: attachment; filename=\"firmware.bin\"\r\nContent-Length: 4096\r\nConnection: keep-alive\r\n\r\n" . $part, $hdrs);
+$cases[] = array("upload_fw, 1 KB of 4 KB then silence", $st, 406);
+$hdrs = false;
+$st2 = raw_https_transaction($sock, "GET /api/system/status HTTP/1.1\r\nHost: $cfg_domain\r\nConnection: close\r\n\r\n", $hdrs);
+$cases[] = array("the same connection: rest of the body sent as a request (closed = 0)", ($st2 === false) ? 0 : $st2, 0);
+fclose($sock);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// c) set result
+$test_cfg['subtests'][22] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
