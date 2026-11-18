@@ -446,7 +446,7 @@ do {
 $kid = false;
 $key_data = false;
 foreach($keychain as $item) {
-  if (strstr($item['type'], "ECDH")) {
+  if (strstr($item['type'], "ECDH") && (strpos((string)@$item['descr'], "RVhUQUlE") !== 0)) {   // DEV-519 (H4): not a paired authenticator (descr "EXTAID" + pid) - its descr cannot change (409)
     $key_data = $item;
     $kid = $item['kid'];
     break;

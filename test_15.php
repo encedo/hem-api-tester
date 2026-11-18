@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 20;   // DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI manifest
+$test_subtest_cnt = 21;   // DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI manifest; 21 pairing descr, token lifetime, nonce order
 
 
 // initialize the execution env
@@ -989,6 +989,157 @@ if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // b) set result
 $test_cfg['subtests'][20] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 21       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST21:
+echo "  subtest-21
+";
+$test_cfg['subtests'][21] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-519 (H4): the descr of a paired external authenticator ("EXTAID" + pid) is reserved - keymgmt create / import / derive /
+//    update refuse it (400) and a pairing record cannot be updated (409); before, an imported X25519 public key with that descr
+//    was a pairing for ext/request / ext/token
+$token_gen = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:gen");
+$token_imp = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:imp");
+$token_upd = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:upd");
+$token_der = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:derive");
+$token_src = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:search");
+$token_del = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:del");
+if ( ($token_gen == false) || ($token_imp == false) || ($token_upd == false) || ($token_der == false) || ($token_src == false) || ($token_del == false) ) goto print_and_exit;
+$run = bin2hex(random_bytes(3));
+$extaid = base64_encode("EXTAID" . random_bytes(32));
+$made = array();                                              // KIDs of keys this subtest made - deleted at the end
+$cases = array();
+$ret_val = false;
+$post_data = json_encode( array('label' => "T-15.21 imp $run", 'type' => "CURVE25519", 'mode' => "ECDH", 'pubkey' => base64_encode(sodium_crypto_scalarmult_base(random_bytes(32))), 'descr' => $extaid) );
+$cases[] = array("keymgmt/import X25519 public key, descr EXTAID+pid", $st = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/import", $ret_val, $post_data, $token_imp), 400);
+if ( ($st == 200) && isset($ret_val['kid']) ) $made[] = $ret_val['kid'];
+$ret_val = false;
+$post_data = json_encode( array('label' => "T-15.21 gen $run", 'type' => "AES256", 'descr' => $extaid) );
+$cases[] = array("keymgmt/create AES256, descr EXTAID+pid", $st = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_gen), 400);
+if ( ($st == 200) && isset($ret_val['kid']) ) $made[] = $ret_val['kid'];
+$ret_val = false;
+$post_data = json_encode( array('label' => "T-15.21 ecdh $run", 'type' => "CURVE25519", 'mode' => "ECDH", 'descr' => base64_encode("CCTEST:T-15.21")) );
+if ( http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_gen) != 200 ) goto print_and_exit;
+$kid_ecdh = $ret_val['kid'];
+$made[] = $kid_ecdh;
+$ret_val = false;
+$post_data = json_encode( array('kid' => $kid_ecdh, 'label' => "T-15.21 der $run", 'type' => "AES256", 'pubkey' => base64_encode(sodium_crypto_scalarmult_base(random_bytes(32))), 'descr' => $extaid) );
+$cases[] = array("keymgmt/derive, descr EXTAID+pid", $st = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/derive", $ret_val, $post_data, $token_der), 400);
+if ( ($st == 200) && isset($ret_val['kid']) ) $made[] = $ret_val['kid'];
+$ret_val = false;
+$post_data = json_encode( array('kid' => $kid_ecdh, 'label' => "T-15.21 upd $run", 'descr' => $extaid) );
+$cases[] = array("keymgmt/update, descr EXTAID+pid", http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/update", $ret_val, $post_data, $token_upd), 400);
+$app = false;
+$code_ok = false;
+if ( extauth_pair_direct($cfg_domain, $token_cfg, "T-15.21 $run", $app, $code_ok) != 200 ) goto print_and_exit;
+$ret_val = false;
+$post_data = json_encode( array('descr' => "^" . base64_encode("EXTAID" . substr(base64_decode($app['pid']), 0, 30))) );   // 36 B - a prefix without padding
+if ( (http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/search", $ret_val, $post_data, $token_src) != 200) || !isset($ret_val['list'][0]['kid']) ) { echo "    pairing record not found\n"; goto print_and_exit; }
+$kid_pair = $ret_val['list'][0]['kid'];
+$made[] = $kid_pair;
+// (the update of the pairing record runs last, in d): before the fix it went through and, without descr, removed the pairing)
+// b) DEV-519 (M5): token lifetime - no exp: 5 min (was 60 s); a later exp is cut to 12 h (auth/token took it unchanged, ext/token
+//    took the authenticator's); ext/token: the scope of the reply must pass the auth/token scope rules (was taken as it came)
+$tok_exp = function($claims_mod) use ($cfg_domain, $cfg_passpharse) {   // auth/token as helper_authorize, claims changed; the token's exp - iat, or false
+  $ret_val = false;
+  if ( http_transaction("http", "GET", $cfg_domain, "/api/auth/token", $ret_val) != 200 ) return false;
+  $secret = hash_pbkdf2("sha256", $cfg_passpharse, $ret_val['eid'], 600000, 32, true);
+  $iat = time() - 5;
+  $claims = $claims_mod(array('jti' => $ret_val['jti'], 'aud' => $ret_val['spk'], 'exp' => $iat + 600, 'iat' => $iat,
+                              'iss' => base64_encode(sodium_crypto_box_publickey_from_secretkey($secret)), 'scope' => "keymgmt:list"));
+  $post_data = json_encode( array('auth' => ejwt_generate($claims, $secret, base64_decode($ret_val['spk']))) );
+  $ret_val = false;
+  if ( http_transaction("http", "POST", $cfg_domain, "/api/auth/token", $ret_val, $post_data) != 200 ) return false;
+  $p = extauth_payload($ret_val['token']);
+  return $p['exp'] - $p['iat'];
+};
+$d = $tok_exp(function($c) { unset($c['exp']); return $c; });
+if ( ($d === false) || ($d < 290) || ($d > 310) ) { echo "    auth/token without exp: lifetime " . var_export($d, true) . " s, expected 300\n"; $cases[] = array("auth/token lifetime without exp", 0, 200); }
+$d = $tok_exp(function($c) { $c['exp'] = time() + 2 * 86400; return $c; });
+if ( ($d === false) || ($d > 12 * 3600 + 10) ) { echo "    auth/token exp +2 days: lifetime " . var_export($d, true) . " s, expected <= 12 h\n"; $cases[] = array("auth/token lifetime cap", 0, 200); }
+$authreq = false;
+if ( extauth_request_direct($cfg_domain, "keymgmt:list", $authreq) != 200 ) goto print_and_exit;
+$t = false;
+if ( extauth_token_direct($cfg_domain, $app, $authreq['jti'], $authreq['scope'][$app['pid']], $t, 2 * 86400) != 200 ) { echo "    ext/token exp +2 days refused\n"; goto print_and_exit; }
+$p = extauth_payload($t);
+if ( $p['exp'] > time() + 12 * 3600 + 10 ) { echo "    ext/token exp +2 days: token exp " . ($p['exp'] - time()) . " s ahead, expected <= 12 h\n"; $cases[] = array("ext/token lifetime cap", 0, 200); }
+$authreq = false;
+if ( extauth_request_direct($cfg_domain, "keymgmt:list", $authreq) != 200 ) goto print_and_exit;
+$m = extauth_session_key($app['aid_prv'], $app['eid'], $authreq['jti']);
+$t = false;
+$cases[] = array("ext/token, reply scope system:reboot (not a token scope)", extauth_token_direct($cfg_domain, $app, $authreq['jti'], extauth_seal("system:reboot", $m), $t), 406);
+// c) DEV-519 (M10): a nonce is consumed only by a request of a known issuer - a JWT with the same jti signed by another key is
+//    refused and the jti stays usable (before: the foreign JWT consumed it and the real one got 401)
+$ret_val = false;
+if ( http_transaction("http", "GET", $cfg_domain, "/api/auth/token", $ret_val) != 200 ) goto print_and_exit;
+$chal = $ret_val;
+$secret = hash_pbkdf2("sha256", $cfg_passpharse, $chal['eid'], 600000, 32, true);
+$foreign = random_bytes(32);
+$iat = time() - 5;
+$claims = array('jti' => $chal['jti'], 'aud' => $chal['spk'], 'exp' => $iat + 600, 'iat' => $iat, 'scope' => "keymgmt:list");
+$ret_val = false;
+$cases[] = array("auth/token, jti signed by another key", http_transaction("http", "POST", $cfg_domain, "/api/auth/token", $ret_val,
+                 json_encode(array('auth' => ejwt_generate($claims + array('iss' => base64_encode(sodium_crypto_box_publickey_from_secretkey($foreign))), $foreign, base64_decode($chal['spk']))))), 401);
+$ret_val = false;
+$cases[] = array("auth/token, the same jti by the user", http_transaction("http", "POST", $cfg_domain, "/api/auth/token", $ret_val,
+                 json_encode(array('auth' => ejwt_generate($claims + array('iss' => base64_encode(sodium_crypto_box_publickey_from_secretkey($secret))), $secret, base64_decode($chal['spk']))))), 200);
+$authreq = false;
+if ( extauth_request_direct($cfg_domain, "keymgmt:list", $authreq) != 200 ) goto print_and_exit;
+$other = extauth_new_app();                                   // not paired: same pid and eid, its own key
+$other['eid'] = $app['eid'];
+$other['pid'] = $app['pid'];
+$t = false;
+$cases[] = array("ext/token, authreply signed by another key", extauth_token_direct($cfg_domain, $other, $authreq['jti'], $authreq['scope'][$app['pid']], $t), 406);
+$cases[] = array("ext/token, the same jti by the paired app", extauth_token_direct($cfg_domain, $app, $authreq['jti'], $authreq['scope'][$app['pid']], $t), 200);
+// d) DEV-519: keymgmt/update changes each field on its own - absent = kept, descr "" = removed, descr null and a request with neither
+//    field = 400 (before: label required, an absent / empty / null descr removed the description); a pairing record: its label can
+//    change and the pairing stays, its descr cannot (409) - before, an update with a label only removed the descr, i.e. the pairing
+$token_get = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:get");
+if ($token_get == false) goto print_and_exit;
+$key_info = function($k) use ($cfg_domain, $token_get) {   // label and descr (decoded) of a key, false on error
+  $ret_val = false;
+  $not_used = false;
+  if ( http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/$k", $ret_val, $not_used, $token_get) != 200 ) return false;
+  return array('label' => $ret_val['label'], 'descr' => isset($ret_val['descr']) ? (string)base64_decode((string)$ret_val['descr']) : "");
+};
+$upd = function($body) use ($cfg_domain, $token_upd) {
+  $ret_val = false;
+  return http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/update", $ret_val, json_encode($body), $token_upd);
+};
+$cases[] = array("keymgmt/update, label only", $upd(array('kid' => $kid_ecdh, 'label' => "T-15.21 L $run")), 200);
+$i = $key_info($kid_ecdh);
+if ( $i !== array('label' => "T-15.21 L $run", 'descr' => "CCTEST:T-15.21") ) { echo "    after label only: " . json_encode($i) . "\n"; $cases[] = array("label only keeps descr", 0, 200); }
+$cases[] = array("keymgmt/update, descr only", $upd(array('kid' => $kid_ecdh, 'descr' => base64_encode("CCTEST:T-15.21 D"))), 200);
+$i = $key_info($kid_ecdh);
+if ( $i !== array('label' => "T-15.21 L $run", 'descr' => "CCTEST:T-15.21 D") ) { echo "    after descr only: " . json_encode($i) . "\n"; $cases[] = array("descr only keeps label", 0, 200); }
+$cases[] = array("keymgmt/update, descr \"\" (removes it)", $upd(array('kid' => $kid_ecdh, 'descr' => "")), 200);
+$i = $key_info($kid_ecdh);
+if ( $i !== array('label' => "T-15.21 L $run", 'descr' => "") ) { echo "    after descr \"\": " . json_encode($i) . "\n"; $cases[] = array("descr \"\" removes it", 0, 200); }
+$cases[] = array("keymgmt/update, descr null", $upd(array('kid' => $kid_ecdh, 'descr' => null)), 400);
+$cases[] = array("keymgmt/update, neither label nor descr", $upd(array('kid' => $kid_ecdh)), 400);
+$cases[] = array("keymgmt/update, label \"\"", $upd(array('kid' => $kid_ecdh, 'label' => "")), 400);
+$cases[] = array("keymgmt/update of a pairing record, label only", $upd(array('kid' => $kid_pair, 'label' => "T-15.21 relabel $run")), 200);
+$authreq = false;
+if ( extauth_request_direct($cfg_domain, "keymgmt:list", $authreq) != 200 ) goto print_and_exit;
+$t = false;
+$cases[] = array("ext/token after the pairing was relabelled", isset($authreq['scope'][$app['pid']]) ? extauth_token_direct($cfg_domain, $app, $authreq['jti'], $authreq['scope'][$app['pid']], $t) : 0, 200);
+$cases[] = array("keymgmt/update of a pairing record, descr", $upd(array('kid' => $kid_pair, 'descr' => base64_encode("CCTEST:T-15.21"))), 409);
+$cases[] = array("keymgmt/update of a pairing record, descr \"\"", $upd(array('kid' => $kid_pair, 'descr' => "")), 409);
+// e) clean up: the keys made here and the pairing
+foreach ($made as $k) {
+  $ret_val = false;
+  $not_used = false;
+  http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/$k", $ret_val, $not_used, $token_del);
+}
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// f) set result
+$test_cfg['subtests'][21] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
