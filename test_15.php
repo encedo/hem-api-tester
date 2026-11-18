@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 19;   // DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length
+$test_subtest_cnt = 20;   // DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI manifest
 
 
 // initialize the execution env
@@ -61,6 +61,35 @@ function auth_with_claims($mod) {
   $post_data = json_encode( array('auth' => ejwt_generate($claims, $user_secret, base64_decode($ret_val['spk']))) );
   $ret_val = false;
   return http_transaction("http", "POST", $cfg_domain, "/api/auth/token", $ret_val, $post_data);
+}
+
+// DEV-519: a small web UI archive - index.html + manifest (+ $extra files not in the manifest), the manifest hash token of
+// index.html replaced by $hash_token when given; signed as the firmware checks it (Ed25519 over SHA-512(tar || pub), trailer
+// pub || sig) with a throw-away key (publisher pinning is off). upload_ui + check_ui, no install_ui; returns check_ui's status
+function ui_archive_check($token, $extra = array(), $hash_token = null) {
+  global $cfg_domain;
+  $index = "<html><body>T-15.20</body></html>\n";
+  $files = array('index.html' => $index, 'manifest' => (($hash_token === null) ? hash('sha256', $index) : $hash_token) . " *./index.html\n");
+  foreach ($extra as $name => $data) $files[$name] = $data;
+  $tarfile = sys_get_temp_dir() . '/t15_ui_' . bin2hex(random_bytes(4)) . '.tar';
+  $tar = new PharData($tarfile);
+  foreach ($files as $name => $data) $tar->addFromString($name, $data);
+  unset($tar);
+  $bytes = file_get_contents($tarfile);
+  unlink($tarfile);
+  $kp = sodium_crypto_sign_keypair();
+  $pub = sodium_crypto_sign_publickey($kp);
+  $sig = sodium_crypto_sign_detached(hash('sha512', $bytes . $pub, true), sodium_crypto_sign_secretkey($kp));
+  $ret_val = false;
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/upgrade/upload_ui", $ret_val, $bytes . $pub . $sig, $token, "webroot.tar");
+  if ($ret_stat != 200) return $ret_stat;
+  for ($i = 0; $i < 30; $i++) {                               // check_ui: 201 started, 202 running, 200 passed, 406 refused
+    $ret_val = false; $not_used = false;
+    $ret_stat = http_transaction("https", "GET", $cfg_domain, "/api/system/upgrade/check_ui", $ret_val, $not_used, $token);
+    if (($ret_stat != 201) && ($ret_stat != 202)) return $ret_stat;
+    sleep(2);
+  }
+  return 0;
 }
 
 
@@ -935,6 +964,31 @@ if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // c) set result
 $test_cfg['subtests'][19] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 20       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST20:
+echo "  subtest-20\n";
+$test_cfg['subtests'][20] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-519 (H3): web UI archive check (upload_ui + check_ui, nothing installed): a valid archive passes; a file not in the
+//    manifest and a hash token that is not 64 hex chars are refused (before: the extra file passed unchecked, a token of
+//    400 hex chars was decoded into a 32-byte stack buffer - restart); the TOE does not restart
+$token_ui = helper_authorize($cfg_domain, $cfg_passpharse, "system:upgrade");
+if ($token_ui == false) goto print_and_exit;
+$cases = array();
+$cases[] = array("UI archive, valid", ui_archive_check($token_ui), 200);
+$cases[] = array("UI archive, a file not in the manifest", ui_archive_check($token_ui, array('extra.js' => "alert(1)\n")), 406);
+$cases[] = array("UI archive, hash token of 66 hex chars", ui_archive_check($token_ui, array(), hash('sha256', 'x') . 'ab'), 406);
+$cases[] = array("UI archive, hash token of 400 hex chars", ui_archive_check($token_ui, array(), str_repeat('ab', 200)), 406);
+$cases[] = array("UI archive, hash token of 63 hex chars", ui_archive_check($token_ui, array(), substr(hash('sha256', 'x'), 1)), 406);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// b) set result
+$test_cfg['subtests'][20] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
