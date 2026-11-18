@@ -152,6 +152,17 @@ $ret_val = false;
 $ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/checkin", $ret_val, $post_data);
 if ( $cfg_debug ) var_dump( $ret_val );
 if ( $ret_stat != 400 ) goto print_and_exit;               // expected 400 - "Bad Request"
+// a2) DEV-519 (H5): JSON nesting limit is 8 - a body with 8 nested containers is parsed (401 - the token is refused), with 9 it is not (400)
+$post_data = '{"checked":"somedata","a":[[[[[[[1]]]]]]]}';  // root object + 7 arrays
+$ret_val = false;
+$ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/checkin", $ret_val, $post_data);
+if ( $cfg_debug ) var_dump( $ret_val );
+if ( $ret_stat != 401 ) goto print_and_exit;               // expected 401 - JSON accepted, "checked" is not a valid token
+$post_data = '{"checked":"somedata","a":[[[[[[[[1]]]]]]]]}'; // root object + 8 arrays
+$ret_val = false;
+$ret_stat = http_transaction("http", "POST", $cfg_domain, "/api/system/checkin", $ret_val, $post_data);
+if ( $cfg_debug ) var_dump( $ret_val );
+if ( $ret_stat != 400 ) goto print_and_exit;               // expected 400 - "Bad Request", nesting too deep
 // b) call TOE /checkin API with too long JSON string
 $post_data = '{"checked":"somedata';                        //JSON opening
 $y = 7300 - (strlen($post_data) + 2);                       // max POSTed body size is 7300bytes (5x1460 a'ka 5*MTU)

@@ -67,8 +67,9 @@ $msg = base64_decode($ret_val['nonce']) ;
 $sig = base64_decode($ret_val['nonce_signed']);
 $pubkey = base64_decode($ret_val['key']);
 $hem = base64url_encode( $pubkey );
-$ret = sodium_crypto_sign_verify_detached( $sig, $msg, $pubkey);
+$ret = sodium_crypto_sign_verify_detached( $sig, "encedo-logger-key:v1:" . $msg, $pubkey);   // DEV-519 (H6): the device signs label || nonce (was the raw nonce)
 if ($ret == false) goto print_and_exit;                   // ups - wtf?
+if ( sodium_crypto_sign_verify_detached( $sig, $msg, $pubkey) ) goto print_and_exit;   // DEV-519 (H6): not a signature over the raw nonce - it would double as a log header certificate
 // f) run code different per configuration
 $log = false;
 if ( strstr($test_cfg['conf'], "PPA") ) {
@@ -188,7 +189,7 @@ if ( $ret_stat != 200 ) goto print_and_exit;                // exit on API call 
 $msg = base64_decode($ret_val['nonce']) ;
 $sig = base64_decode($ret_val['nonce_signed']);
 $pubkey = base64_decode($ret_val['key']);
-$ret = sodium_crypto_sign_verify_detached( $sig, $msg, $pubkey);
+$ret = sodium_crypto_sign_verify_detached( $sig, "encedo-logger-key:v1:" . $msg, $pubkey);   // DEV-519 (H6): the device signs label || nonce (was the raw nonce)
 if ($ret == false) goto print_and_exit;                   // ups - wtf?
 // d) validate log entries - DEV-500: format v2 required (per-file key certified by the device key, every line signed); a v1 log is reported and fails
 $report = array();
