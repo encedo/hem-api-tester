@@ -383,7 +383,7 @@ if ($token_upg == false) goto print_and_exit;
 $cases[] = array("upload_fw, name x.txt", raw_https_request($cfg_domain, "POST /api/system/upgrade/upload_fw HTTP/1.1\r\nHost: $cfg_domain\r\nAuthorization: Bearer $token_upg\r\nContent-Disposition: attachment; filename=\"x.txt\"\r\nContent-Length: 10\r\nConnection: close\r\n\r\n0123456789"), 400);
 $cases[] = array("upload_fw, 3 MiB (body not sent)", raw_https_request($cfg_domain, "POST /api/system/upgrade/upload_fw HTTP/1.1\r\nHost: $cfg_domain\r\nAuthorization: Bearer $token_upg\r\nContent-Disposition: attachment; filename=\"fw.bin\"\r\nContent-Length: 3145728\r\nConnection: close\r\n\r\n"), 413);
 // DEV-502 (T-15.9 b): upload_fw while check_fw runs is refused (DEV-501 G6 D.10); the running image passes the check (about 5 s)
-$fw_image = getenv("ENCEDO_FW_IMAGE") ? getenv("ENCEDO_FW_IMAGE") : __DIR__ . "/../encedo_firmware/Firmware/EncedoKey/tmp_signed.bin";
+$fw_image = getenv("ENCEDO_FW_IMAGE") ? getenv("ENCEDO_FW_IMAGE") : __DIR__ . "/../encedo_firmware/Firmware/EncedoKey/Encedo_FW_USB_v1_signed.bin";   // DEV-519: the post-build names the signed bin like the signed hex (was tmp_signed.bin)
 $post_data = @file_get_contents($fw_image);
 if ( $post_data === false ) echo "    $fw_image not found - upload_fw during check_fw skipped\n";
 else {
