@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 24;   // DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI manifest; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check; 24 password change with the current password, wrap KEK label
+$test_subtest_cnt = 25;   //DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI manifest; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check; 24 password change with the current password, wrap KEK label; 25 UI archive untar failure / no file
 
 
 // initialize the execution env
@@ -1315,6 +1315,58 @@ if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // c) set result
 $test_cfg['subtests'][24] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 25       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST25:
+echo "  subtest-25\n";
+$test_cfg['subtests'][25] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-519 (L38): a UI archive that untar cannot finish (index.html unpacked, then the manifest header with a wrong checksum) and
+//    one with no file - check_ui and install_ui 406, the installed UI (uis) unchanged; before, both were 200 and install_ui
+//    installed the partly unpacked / empty /webroot.new
+$token_ui = helper_authorize($cfg_domain, $cfg_passpharse, "system:upgrade");
+if ($token_ui == false) goto print_and_exit;
+$ret_val = false;
+http_transaction("http", "GET", $cfg_domain, "/api/system/version", $ret_val);
+$uis_before = $ret_val['uis'] ?? '';
+$index = "<html><body>T-15.25</body></html>\n";
+$tarfile = sys_get_temp_dir() . '/t15_25_' . bin2hex(random_bytes(4)) . '.tar';
+$tar = new PharData($tarfile);
+$tar->addFromString('index.html', $index);
+$tar->addFromString('manifest', hash('sha256', $index) . " *./index.html\n");
+unset($tar);
+$broken = file_get_contents($tarfile);
+unlink($tarfile);
+$h2 = 512 + 512 * intdiv(strlen($index) + 511, 512);           // the manifest header
+$broken[$h2 + 148] = ($broken[$h2 + 148] == '1') ? '2' : '1';  // its checksum field
+$cases = array();
+foreach (array("bad checksum in the 2nd header" => $broken, "no file" => str_repeat("\0", 1024)) as $name => $bytes) {
+  $kp = sodium_crypto_sign_keypair();                          // signed as ui_archive_check() does (publisher pinning is off)
+  $pub = sodium_crypto_sign_publickey($kp);
+  $bytes .= $pub . sodium_crypto_sign_detached(hash('sha512', $bytes . $pub, true), sodium_crypto_sign_secretkey($kp));
+  $ret_val = false;
+  if (http_transaction("https", "POST", $cfg_domain, "/api/system/upgrade/upload_ui", $ret_val, $bytes, $token_ui, "webroot.tar") != 200) goto print_and_exit;
+  for ($i = 0; $i < 30; $i++) {
+    $ret_val = false; $not_used = false;
+    $st = http_transaction("https", "GET", $cfg_domain, "/api/system/upgrade/check_ui", $ret_val, $not_used, $token_ui);
+    if (($st != 201) && ($st != 202)) break;
+    sleep(2);
+  }
+  $cases[] = array("UI archive, $name: check_ui", $st, 406);
+  $ret_val = false; $not_used = false;
+  $cases[] = array("UI archive, $name: install_ui", http_transaction("https", "GET", $cfg_domain, "/api/system/upgrade/install_ui", $ret_val, $not_used, $token_ui), 406);
+}
+$ret_val = false;
+http_transaction("http", "GET", $cfg_domain, "/api/system/version", $ret_val);
+$cases[] = array("installed UI unchanged (uis)", (($ret_val['uis'] ?? '') === $uis_before) ? 1 : 0, 1);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// b) set result
+$test_cfg['subtests'][25] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
