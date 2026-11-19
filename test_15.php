@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 23;   // DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI manifest; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check
+$test_subtest_cnt = 24;   // DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI manifest; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check; 24 password change with the current password, wrap KEK label
 
 
 // initialize the execution env
@@ -1224,6 +1224,97 @@ if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // b) set result
 $test_cfg['subtests'][23] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 24       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST24:
+echo "  subtest-24\n";
+$test_cfg['subtests'][24] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-519 (L10): a user token (sub U) changes the password only with a proof of the current one as well - userkey_hmac =
+//    HMAC-SHA256(key = X25519(new, spk) || X25519(current, spk), msg = nonce); the proof of the new key alone, a wrong current
+//    password or a low-order new key -> 400 (before: 200 - a token alone changed the password, a wrong proof kept it silently);
+//    a master token (sub M, the recovery of a forgotten password) proves the new key alone, as before
+$pw_new = $cfg_passpharse . " T-15.24";
+$t24_change = function ($token, $new_pw, $cur_pw, $low = false) use ($cfg_domain) {   // POST config userkey; $cur_pw false = new key only
+  $ret_val = false;
+  $not_used = false;
+  if (http_transaction("https", "GET", $cfg_domain, "/api/system/config", $ret_val, $not_used, $token) != 200) return -1;
+  $eid = $ret_val['eid'];
+  $spk = base64_decode($ret_val['spk']);
+  $nonce = base64_decode($ret_val['nonce']);
+  $new_prv = hash_pbkdf2("sha256", $new_pw, $eid, 600000, 32, true);
+  $new_pub = $low ? str_repeat("\0", 32) : sodium_crypto_box_publickey_from_secretkey($new_prv);
+  $key = sodium_crypto_scalarmult($new_prv, $spk);
+  if ($cur_pw !== false) $key .= sodium_crypto_scalarmult(hash_pbkdf2("sha256", $cur_pw, $eid, 600000, 32, true), $spk);
+  $post_data = json_encode( array('userkey' => base64_encode($new_pub), 'userkey_nonce' => base64_encode($nonce),
+                                  'userkey_hmac' => base64_encode(hash_hmac("sha256", $nonce, $key, true))) );
+  $ret_val = false;
+  return http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token);
+};
+$t24_opens = function ($pw) use ($cfg_domain) { return (helper_authorize($cfg_domain, $pw, "system:config") !== false) ? 200 : 401; };
+$cases = array();
+$token_u = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
+$token_m = helper_authorize($cfg_domain, $cfg_passpharse_admin, "system:config");
+if ( ($token_u == false) || ($token_m == false) ) goto print_and_exit;
+$cases[] = array("U token, proof of the new key only", $t24_change($token_u, $pw_new, false), 400);
+$cases[] = array("U token, wrong current password", $t24_change($token_u, $pw_new, $cfg_passpharse . "?"), 400);
+$cases[] = array("U token, low-order new key", $t24_change($token_u, $pw_new, $cfg_passpharse, true), 400);
+$cases[] = array("the password is unchanged", $t24_opens($cfg_passpharse), 200);
+$cases[] = array("U token, current password", $t24_change($token_u, $pw_new, $cfg_passpharse), 200);
+$cases[] = array("the old password no longer opens", $t24_opens($cfg_passpharse), 401);
+$cases[] = array("the new password opens", $t24_opens($pw_new), 200);
+$token_n = helper_authorize($cfg_domain, $pw_new, "system:config");
+$cases[] = array("U token of the new password, back to the original", ($token_n == false) ? -1 : $t24_change($token_n, $cfg_passpharse, $pw_new), 200);
+$cases[] = array("M token, proof of the new key only", $t24_change($token_m, $pw_new, false), 200);
+$cases[] = array("the new password opens (set by M)", $t24_opens($pw_new), 200);
+$cases[] = array("M token, back to the original", $t24_change($token_m, $cfg_passpharse, false), 200);
+if ($t24_opens($cfg_passpharse) != 200) {                    // whatever failed above: put the original password back with the master key
+  $cases[] = array("the original password opens (restored by M)", $t24_change($token_m, $cfg_passpharse, false), 200);
+}
+$cases[] = array("the original password opens", $t24_opens($cfg_passpharse), 200);
+// b) DEV-519 (L2): the wrap / unwrap KEK from ECDH has the KEK size in its HKDF label - "encedo-wrap:v1:aes<bits>:" || hkdf_ctx (before:
+//    "encedo-wrap:v1:" for every size, so the AES-128 KEK was the first half of the AES-256 one); checked against a local X25519 +
+//    HKDF-SHA512 + AES Key Wrap (RFC 3394) with a peer key made here
+$token_gen = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:gen");
+$token_del = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:del");
+if ( ($token_gen == false) || ($token_del == false) ) goto print_and_exit;
+$ret_val = false;
+$post_data = json_encode( array('label' => "T-15.24 wrap label", 'type' => "CURVE25519", 'descr' => base64_encode("CCTEST:T-15.24")) );
+if (http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_gen) != 200) goto print_and_exit;
+$kid = $ret_val['kid'];
+$ret_val = false;
+$not_used = false;
+$st = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/$kid", $ret_val, $not_used, $token_gen);
+$token_use = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:use:$kid");
+if ( ($st == 200) && isset($ret_val['pubkey']) && ($token_use !== false) ) {
+  $peer_prv = random_bytes(32);
+  $z = sodium_crypto_scalarmult($peer_prv, base64_decode($ret_val['pubkey']));
+  $msg = random_bytes(32);
+  $ctx = random_bytes(8);
+  foreach (array("AES128" => 16, "AES256" => 32) as $alg => $len) {
+    $ret_val = false;
+    $post_data = json_encode( array('kid' => $kid, 'pubkey' => base64_encode(sodium_crypto_scalarmult_base($peer_prv)), 'alg' => $alg,
+                                    'msg' => base64_encode($msg), 'hkdf_ctx' => base64_encode($ctx)) );
+    $st = http_transaction("https", "POST", $cfg_domain, "/api/crypto/cipher/wrap", $ret_val, $post_data, $token_use);
+    $kek = hash_hkdf("sha512", $z, $len, "encedo-wrap:v1:aes" . ($len * 8) . ":" . $ctx, "");
+    $local = openssl_encrypt($msg, "id-aes" . ($len * 8) . "-wrap", $kek, OPENSSL_RAW_DATA, hex2bin("A6A6A6A6A6A6A6A6"));
+    $same = ($st == 200) && isset($ret_val['wrapped']) && (base64_decode($ret_val['wrapped']) === $local);
+    $cases[] = array("wrap $alg with a peer pubkey = the local KEK under encedo-wrap:v1:aes" . ($len * 8) . ":", $same ? 200 : (($st == 200) ? 0 : $st), 200);
+  }
+} else {
+  $cases[] = array("keymgmt/get + keymgmt:use token of the new key", $st, 200);
+}
+$ret_val = false;
+$not_used = false;
+http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/$kid", $ret_val, $not_used, $token_del);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// c) set result
+$test_cfg['subtests'][24] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
