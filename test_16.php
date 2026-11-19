@@ -77,6 +77,13 @@ function t16_check($domain, $password, $policy) {
   $ret_val = false;
   $st = http_transaction("https", "POST", $domain, "/api/crypto/ecdh", $ret_val, json_encode($ecdh), $tu);
   if ( $st != (isset($on['raw_ecdh_enabled']) ? 200 : 403) ) return "raw ECDH: HTTP $st";
+  // DEV-520: a key of mode ECDH_RAW gives raw Z whatever the policy
+  $ret_val = false;
+  if ( http_transaction("https", "POST", $domain, "/api/keymgmt/create", $ret_val, json_encode(array('label' => "T-16 raw", 'type' => "SECP256R1", 'mode' => "ECDH_RAW", 'descr' => base64_encode("CCTEST:T-16_$run"))), $tg) != 200 ) return "create ECDH_RAW";
+  $kraw = $ret_val['kid'];
+  $tr = helper_authorize($domain, $password, "keymgmt:use:$kraw");
+  $ret_val = false;
+  if ( ($st = http_transaction("https", "POST", $domain, "/api/crypto/ecdh", $ret_val, json_encode(array('kid' => $kraw, 'pubkey' => $keys['b'][1])), $tr)) != 200 ) return "raw ECDH on an ECDH_RAW key: HTTP $st";
   $ret_val = false;
   if ( ($st = http_transaction("https", "POST", $domain, "/api/crypto/ecdh", $ret_val, json_encode($ecdh + array('alg' => "SHA2-256")), $tu)) != 200 ) return "ECDH SHA2-256: HTTP $st";
   $ret_val = false;
