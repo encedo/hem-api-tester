@@ -18,7 +18,7 @@ $filename_hex_path_official = "https://ipfs.encedo.com/ipfs/QmSAXaeRhNqHcaSpW2x8
 $filename_hex_path_diagversion = "https://ipfs.encedo.com/ipfs/QmNMhZkdsBB8fikUWAcJC1EeiSqnfSSdvHajW136TDYaqo";
 
 // official current version of the Encedo Manager
-$dahsboard_path = "https://api.encedo.com/download/dashboard/current";
+$dahsboard_path = "https://api.encedo.com/download/dashboard/";   // DEV-519 (H2): the release signed by a pinned publisher (current = the old archive of a publisher not pinned)
 
 
 // prompt

@@ -8,7 +8,10 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 25;   //DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI manifest; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check; 24 password change with the current password, wrap KEK label; 25 UI archive untar failure / no file
+$test_subtest_cnt = 27;   //DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI publisher pinning; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check; 24 password change with the current password, wrap KEK label; 25 UI archive of a publisher not pinned not installed; 26 JSON token limit, request deadlines, upload scope; 27 FLS: disk lock, config, defrag (DIAG)
+
+// DEV-519 (H2): the current Encedo Manager release in the HEM format (webroot.tar signed by a pinned publisher)
+$ui_release_url = "https://api.encedo.com/download/dashboard/";
 
 
 // initialize the execution env
@@ -63,25 +66,19 @@ function auth_with_claims($mod) {
   return http_transaction("http", "POST", $cfg_domain, "/api/auth/token", $ret_val, $post_data);
 }
 
-// DEV-519: a small web UI archive - index.html + manifest (+ $extra files not in the manifest), the manifest hash token of
-// index.html replaced by $hash_token when given; signed as the firmware checks it (Ed25519 over SHA-512(tar || pub), trailer
-// pub || sig) with a throw-away key (publisher pinning is off). upload_ui + check_ui, no install_ui; returns check_ui's status
-function ui_archive_check($token, $extra = array(), $hash_token = null) {
-  global $cfg_domain;
-  $index = "<html><body>T-15.20</body></html>\n";
-  $files = array('index.html' => $index, 'manifest' => (($hash_token === null) ? hash('sha256', $index) : $hash_token) . " *./index.html\n");
-  foreach ($extra as $name => $data) $files[$name] = $data;
-  $tarfile = sys_get_temp_dir() . '/t15_ui_' . bin2hex(random_bytes(4)) . '.tar';
-  $tar = new PharData($tarfile);
-  foreach ($files as $name => $data) $tar->addFromString($name, $data);
-  unset($tar);
-  $bytes = file_get_contents($tarfile);
-  unlink($tarfile);
+// DEV-519: a tar signed as the firmware checks it (Ed25519 over SHA-512(tar || pub), trailer pub || sig) with a throw-away key -
+// not a pinned publisher (DEV-519 (H2)), so check_ui refuses it
+function ui_sign($bytes) {
   $kp = sodium_crypto_sign_keypair();
   $pub = sodium_crypto_sign_publickey($kp);
-  $sig = sodium_crypto_sign_detached(hash('sha512', $bytes . $pub, true), sodium_crypto_sign_secretkey($kp));
+  return $bytes . $pub . sodium_crypto_sign_detached(hash('sha512', $bytes . $pub, true), sodium_crypto_sign_secretkey($kp));
+}
+
+// DEV-519: upload_ui of a signed archive + check_ui, no install_ui; returns check_ui's status
+function ui_upload_check($token, $signed) {
+  global $cfg_domain;
   $ret_val = false;
-  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/upgrade/upload_ui", $ret_val, $bytes . $pub . $sig, $token, "webroot.tar");
+  $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/upgrade/upload_ui", $ret_val, $signed, $token, "webroot.tar");
   if ($ret_stat != 200) return $ret_stat;
   for ($i = 0; $i < 30; $i++) {                               // check_ui: 201 started, 202 running, 200 passed, 406 refused
     $ret_val = false; $not_used = false;
@@ -118,6 +115,7 @@ $test_cfg['blv'] = @$ret_val['blv'];
 $test_cfg['fwv'] = $ret_val['fwv'];
 $test_cfg['conf'] = "ENCEDO PPA";
 if ( strstr($ret_val['hwv'], "EPA") ) $test_cfg['conf'] = "ENCEDO EPA";
+$diag_mode = strstr($test_cfg['fwv'], "-DIAG");                // DEV-519: T-15.27 needs the DIAG endpoints
 $uptime = 0;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // c) set RTC clock - code from T-1.3
@@ -974,17 +972,20 @@ $test_cfg['subtests'][19] = 'OK';                             // mark this subte
 TEST20:
 echo "  subtest-20\n";
 $test_cfg['subtests'][20] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
-// a) DEV-519 (H3): web UI archive check (upload_ui + check_ui, nothing installed): a valid archive passes; a file not in the
-//    manifest and a hash token that is not 64 hex chars are refused (before: the extra file passed unchecked, a token of
-//    400 hex chars was decoded into a 32-byte stack buffer - restart); the TOE does not restart
+// a) DEV-519 (H2): web UI archive check (upload_ui + check_ui, nothing installed): the Manager release (signed by a pinned
+//    publisher) passes; the same tar signed by a key that is not pinned and the release with one byte changed are refused
+//    (before H2 any signer passed); the TOE does not restart. The H3 manifest cases (a file not in the manifest, a hash token
+//    that is not 64 hex chars) need an archive signed by a pinned key - not reachable from the tester since H2
 $token_ui = helper_authorize($cfg_domain, $cfg_passpharse, "system:upgrade");
 if ($token_ui == false) goto print_and_exit;
+$rel = @file_get_contents($ui_release_url);
+if ( ($rel === false) || (strlen($rel) < 1024) ) { echo "    UI release not downloaded from $ui_release_url\n"; goto print_and_exit; }
+$bad = $rel;
+$bad[1000] = chr(ord($bad[1000]) ^ 0x01);                     // one bit of the tar - the signature no longer checks out
 $cases = array();
-$cases[] = array("UI archive, valid", ui_archive_check($token_ui), 200);
-$cases[] = array("UI archive, a file not in the manifest", ui_archive_check($token_ui, array('extra.js' => "alert(1)\n")), 406);
-$cases[] = array("UI archive, hash token of 66 hex chars", ui_archive_check($token_ui, array(), hash('sha256', 'x') . 'ab'), 406);
-$cases[] = array("UI archive, hash token of 400 hex chars", ui_archive_check($token_ui, array(), str_repeat('ab', 200)), 406);
-$cases[] = array("UI archive, hash token of 63 hex chars", ui_archive_check($token_ui, array(), substr(hash('sha256', 'x'), 1)), 406);
+$cases[] = array("UI archive, release (pinned publisher)", ui_upload_check($token_ui, $rel), 200);
+$cases[] = array("UI archive, release tar signed by a key not pinned", ui_upload_check($token_ui, ui_sign(substr($rel, 0, -96))), 406);
+$cases[] = array("UI archive, release with one byte changed", ui_upload_check($token_ui, $bad), 406);
 if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // b) set result
@@ -1325,41 +1326,20 @@ $test_cfg['subtests'][24] = 'OK';                             // mark this subte
 TEST25:
 echo "  subtest-25\n";
 $test_cfg['subtests'][25] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
-// a) DEV-519 (L38): a UI archive that untar cannot finish (index.html unpacked, then the manifest header with a wrong checksum) and
-//    one with no file - check_ui and install_ui 406, the installed UI (uis) unchanged; before, both were 200 and install_ui
-//    installed the partly unpacked / empty /webroot.new
+// a) DEV-519 (H2): the Manager release tar signed by a key that is not pinned - check_ui and install_ui 406, the installed UI
+//    (uis) unchanged; before H2 it passed and install_ui installed it. (L38 - an archive untar cannot finish / with no file - was
+//    checked before / after on 2026-11-19, cd715401 / cebff21b; since H2 such an archive is refused at the signature already)
 $token_ui = helper_authorize($cfg_domain, $cfg_passpharse, "system:upgrade");
 if ($token_ui == false) goto print_and_exit;
+$rel = @file_get_contents($ui_release_url);
+if ( ($rel === false) || (strlen($rel) < 1024) ) { echo "    UI release not downloaded from $ui_release_url\n"; goto print_and_exit; }
 $ret_val = false;
 http_transaction("http", "GET", $cfg_domain, "/api/system/version", $ret_val);
 $uis_before = $ret_val['uis'] ?? '';
-$index = "<html><body>T-15.25</body></html>\n";
-$tarfile = sys_get_temp_dir() . '/t15_25_' . bin2hex(random_bytes(4)) . '.tar';
-$tar = new PharData($tarfile);
-$tar->addFromString('index.html', $index);
-$tar->addFromString('manifest', hash('sha256', $index) . " *./index.html\n");
-unset($tar);
-$broken = file_get_contents($tarfile);
-unlink($tarfile);
-$h2 = 512 + 512 * intdiv(strlen($index) + 511, 512);           // the manifest header
-$broken[$h2 + 148] = ($broken[$h2 + 148] == '1') ? '2' : '1';  // its checksum field
 $cases = array();
-foreach (array("bad checksum in the 2nd header" => $broken, "no file" => str_repeat("\0", 1024)) as $name => $bytes) {
-  $kp = sodium_crypto_sign_keypair();                          // signed as ui_archive_check() does (publisher pinning is off)
-  $pub = sodium_crypto_sign_publickey($kp);
-  $bytes .= $pub . sodium_crypto_sign_detached(hash('sha512', $bytes . $pub, true), sodium_crypto_sign_secretkey($kp));
-  $ret_val = false;
-  if (http_transaction("https", "POST", $cfg_domain, "/api/system/upgrade/upload_ui", $ret_val, $bytes, $token_ui, "webroot.tar") != 200) goto print_and_exit;
-  for ($i = 0; $i < 30; $i++) {
-    $ret_val = false; $not_used = false;
-    $st = http_transaction("https", "GET", $cfg_domain, "/api/system/upgrade/check_ui", $ret_val, $not_used, $token_ui);
-    if (($st != 201) && ($st != 202)) break;
-    sleep(2);
-  }
-  $cases[] = array("UI archive, $name: check_ui", $st, 406);
-  $ret_val = false; $not_used = false;
-  $cases[] = array("UI archive, $name: install_ui", http_transaction("https", "GET", $cfg_domain, "/api/system/upgrade/install_ui", $ret_val, $not_used, $token_ui), 406);
-}
+$cases[] = array("UI archive, release tar signed by a key not pinned: check_ui", ui_upload_check($token_ui, ui_sign(substr($rel, 0, -96))), 406);
+$ret_val = false; $not_used = false;
+$cases[] = array("UI archive, release tar signed by a key not pinned: install_ui", http_transaction("https", "GET", $cfg_domain, "/api/system/upgrade/install_ui", $ret_val, $not_used, $token_ui), 406);
 $ret_val = false;
 http_transaction("http", "GET", $cfg_domain, "/api/system/version", $ret_val);
 $cases[] = array("installed UI unchanged (uis)", (($ret_val['uis'] ?? '') === $uis_before) ? 1 : 0, 1);
@@ -1372,6 +1352,114 @@ $test_cfg['subtests'][25] = 'OK';                             // mark this subte
 /////////////////////////////////////////////////////////////////////
 
 /////////////////////////////////////////////////////////////////////
+// Subtest: 26       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST26:
+echo "  subtest-26\n";
+$test_cfg['subtests'][26] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-519 (M4): a JSON body with 128 structural tokens reaches the handler, 129 is refused before parsing (400) - a 7 KB body
+//    of tokens took ~175 KB of heap; POST config with an unknown field only (ignored) as the handler that answers non-400
+$token_cfg = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
+if ($token_cfg == false) goto print_and_exit;
+$cases = array();
+foreach (array(128 => "handled", 129 => 400) as $n => $exp) {
+  $body = '{"x26":[' . rtrim(str_repeat('1,', $n - 2), ',') . ']}';  // { : [ and n-3 commas = n tokens
+  $ret_val = false;
+  $st = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $body, $token_cfg);
+  $cases[] = array("POST config with $n JSON tokens", ($exp === "handled") ? (($st != 400) ? 1 : $st) : $st, ($exp === "handled") ? 1 : 400);
+}
+// b) DEV-519 (M9): one deadline per request - a TLS handshake sent 1 B / 400 ms and a body sent 1 B / 1 s are closed after
+//    about 15 s (were kept as long as the bytes came); a connection still open after 40 s is a failure
+$slow = function($port, $head, $data, $gap) use ($cfg_domain) {    // seconds until the device closed the connection, 99 = still open
+  $s = @stream_socket_client("tcp://$cfg_domain:$port", $e, $es, 5);
+  if (!$s) return -1;
+  stream_set_blocking($s, false);
+  $t0 = microtime(true);
+  if ($head !== '') fwrite($s, $head);
+  for ($i = 0; (microtime(true) - $t0) < 40; $i++) {
+    $ok = @fwrite($s, $data[$i % strlen($data)]);
+    usleep((int)($gap * 1000000));
+    @fread($s, 4096);
+    if (($ok === false) || feof($s)) { fclose($s); return (int)(microtime(true) - $t0); }
+  }
+  fclose($s);
+  return 99;
+};
+$t = $slow(443, '', "\x16\x03\x01\x02\x00" . str_repeat("\x00", 512), 0.4);
+$cases[] = array("TLS handshake 1 B / 400 ms closed after $t s", (($t >= 10) && ($t <= 25)) ? 1 : 0, 1);
+$t = $slow(80, "POST /api/auth/token HTTP/1.1\r\nHost: $cfg_domain\r\nContent-Type: application/json\r\nContent-Length: 4000\r\n\r\n", str_repeat(' ', 4000), 1.0);
+$cases[] = array("request body 1 B / 1 s closed after $t s", (($t >= 10) && ($t <= 25)) ? 1 : 0, 1);
+// c) DEV-519: upload_fw / upload_ui accept system:config too (were system:upgrade only, unlike GET upgrade/*) - a few bytes, nothing installed
+$ret_val = false;
+$cases[] = array("upload_fw with a system:config token", http_transaction("https", "POST", $cfg_domain, "/api/system/upgrade/upload_fw", $ret_val, "T-15.26 not a firmware", $token_cfg, "firmware.bin"), 200);
+$ret_val = false;
+$cases[] = array("upload_ui with a system:config token", http_transaction("https", "POST", $cfg_domain, "/api/system/upgrade/upload_ui", $ret_val, "T-15.26 not a tar", $token_cfg, "webroot.tar"), 200);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// d) set result
+$test_cfg['subtests'][26] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 27       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST27:
+echo "  subtest-27\n";
+if ($diag_mode == false) {
+  echo "    No DIAG mode, subtest will be skipped.\n";
+  $test_cfg['subtests'][27] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
+  goto TEST14;
+}
+$test_cfg['subtests'][27] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-519 in an FLS state (DIAG break_trng): M17 - an unlocked disk 1 is locked by the device, unlock 409, lock 200 (was 409);
+//    L41 - POST config is processed (an unknown wipeout value 400, was 409 for everything - no wipe out of a lasting FLS);
+//    defrag/start 409 (reclaim rewrites the key storage), defrag/check 200; then a restart clears the FLS
+$token_cfg = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
+$token_rw = helper_authorize($cfg_domain, $cfg_passpharse, "storage:disk1:rw");
+$token_d1 = helper_authorize($cfg_domain, $cfg_passpharse, "storage:disk1");
+if ( ($token_cfg == false) || ($token_rw == false) || ($token_d1 == false) ) goto print_and_exit;
+$disk1 = function() use ($cfg_domain) { $r = false; http_transaction("http", "GET", $cfg_domain, "/api/system/status", $r); return array(substr(strrchr($r['storage'][1] ?? ':?', ':'), 1), intval($r['fls_state'] ?? -1)); };
+$cases = array();
+$ret_val = false; $not_used = false;
+$cases[] = array("unlock disk 1 rw", http_transaction("https", "GET", $cfg_domain, "/api/storage/unlock/rw", $ret_val, $not_used, $token_rw), 200);
+$cases[] = array("disk 1 unlocked rw", ($disk1()[0] === 'rw') ? 1 : 0, 1);
+$ret_val = false; $not_used = false;
+if ( http_transaction("https", "GET", $cfg_domain, "/api/diag/break_trng", $ret_val, $not_used) != 200 ) goto print_and_exit;
+for ($i = 0; ($i < 40) && ($disk1()[1] == 0); $i++) sleep(1);  // the next TRNG test fails (every 15 s)
+sleep(3);                                                     // taskCTRL checks the FLS about once a second
+list($d1, $fls) = $disk1();
+$cases[] = array("FLS set (fls_state $fls)", ($fls != 0) ? 1 : 0, 1);
+$cases[] = array("disk 1 locked by the FLS (now '$d1')", ($d1 === '-') ? 1 : 0, 1);
+$ret_val = false; $not_used = false;
+$cases[] = array("unlock in FLS", http_transaction("https", "GET", $cfg_domain, "/api/storage/unlock/rw", $ret_val, $not_used, $token_rw), 409);
+$ret_val = false; $not_used = false;
+$cases[] = array("lock in FLS", http_transaction("https", "GET", $cfg_domain, "/api/storage/lock", $ret_val, $not_used, $token_d1), 200);
+$ret_val = false;
+$cases[] = array("POST config in FLS, wipeout \"nonsense\"", http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, json_encode(array('wipeout' => "nonsense")), $token_cfg), 400);
+$ret_val = false; $not_used = false;
+$cases[] = array("defrag/start in FLS", http_transaction("https", "GET", $cfg_domain, "/api/system/defrag/start", $ret_val, $not_used, $token_cfg), 409);
+$ret_val = false; $not_used = false;
+$cases[] = array("defrag/check in FLS", http_transaction("https", "GET", $cfg_domain, "/api/system/defrag/check", $ret_val, $not_used, $token_cfg), 200);
+$ret_val = false; $not_used = false;
+http_transaction("https", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $not_used, $token_cfg);   // the FLS is cleared by a restart only
+if ( !helper_wait_reboot($cfg_domain, 120) ) { echo "    TOE not back after the restart\n"; goto print_and_exit; }
+sleep(15);                                                    // HTTPS and the check-in a moment after status answers
+$uptime = 0;
+if ( !helper_checkin($cfg_domain) ) { echo "    check-in after the restart failed\n"; goto print_and_exit; }
+$token_cfg = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");   // the restart ended the earlier tokens - 15.14 uses this one
+if ($token_cfg == false) goto print_and_exit;
+$cases[] = array("FLS cleared after the restart", ($disk1()[1] == 0) ? 1 : 0, 1);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// b) set result
+$test_cfg['subtests'][27] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////
 // Subtest: 14       ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
 TEST14:
@@ -1379,7 +1467,7 @@ echo "  subtest-14\n";
 $test_cfg['subtests'][14] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) service wipe to the factory default (DEV-438): an unknown wipeout value is refused; "factory" wipes the TOE and formats
 //    the internal disk - the TOE comes back not initialised and without the TLS files of the previous owner, so HTTPS does
-//    not start (a classic wipe empties /tmp as well, the UI stays). Runs last - the TOE has to be initialised again (T-2).
+//    not start (a classic wipe keeps /tmp with the TLS files since DEV-519 L42, and the UI). Runs last - the TOE has to be initialised again (T-2).
 $ret_val = false;
 $post_data = json_encode( array('wipeout' => "nonsense") );
 $ret_stat = http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, $post_data, $token_cfg);
@@ -1413,7 +1501,7 @@ $test_cfg['subtests'][14] = 'OK';                             // mark this subte
 $check_passed = 0;
 $check_failed = 0;
 foreach($test_cfg['subtests'] as $no => $val) {
-  if ($val === 'OK') $check_passed++;
+  if (($val === 'OK') || ($val === 'SKIPPED (no DIAG)')) $check_passed++;   // DEV-519: a DIAG subtest skipped on a build without DIAG is not a failure (as T-8)
   else $check_failed++;
 }
 if ($check_failed == 0) $test_cfg['result'] = 'PASS';
