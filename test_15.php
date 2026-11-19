@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 22;   // DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI manifest; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close
+$test_subtest_cnt = 23;   // DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI manifest; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check
 
 
 // initialize the execution env
@@ -1193,6 +1193,37 @@ if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // c) set result
 $test_cfg['subtests'][22] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 23       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST23:
+echo "  subtest-23\n";
+$test_cfg['subtests'][23] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-519 (L16): an X25519 public key is checked (wc_curve25519_check_public) at import, pairing, key change and init - a
+//    low-order point (all zero, u = 1) is refused with 400 (before: stored, 200); a valid key is still imported
+$token_imp = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:imp");
+$token_del = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:del");
+if ( ($token_imp == false) || ($token_del == false) ) goto print_and_exit;
+$cases = array();
+foreach (array("all zero" => array(str_repeat("\0", 32), 400), "u = 1" => array("\x01" . str_repeat("\0", 31), 400),
+               "valid" => array(sodium_crypto_scalarmult_base(random_bytes(32)), 200)) as $name => $v) {
+  $ret_val = false;
+  $post_data = json_encode( array('label' => "T-15.23 $name", 'type' => "CURVE25519", 'mode' => "ECDH", 'pubkey' => base64_encode($v[0]), 'descr' => base64_encode("CCTEST:T-15.23")) );
+  $cases[] = array("keymgmt/import X25519 public key, $name", $st = http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/import", $ret_val, $post_data, $token_imp), $v[1]);
+  if ( ($st == 200) && isset($ret_val['kid']) ) {
+    $not_used = false;
+    $r2 = false;
+    http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/" . $ret_val['kid'], $r2, $not_used, $token_del);
+  }
+}
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// b) set result
+$test_cfg['subtests'][23] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
