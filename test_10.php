@@ -722,7 +722,9 @@ $binbody2 = bin2hex(base64_decode($ret_val['dump']));
 //uncomment to check if is fill with zeros
 //var_dump($binbody2);
 if ($binbody == $binbody2) goto print_and_exit;             //expected to be different
-$wiped = substr(base64_decode($ret_val['dump']), 1);        // DEV-499 (D2): the record body must be wiped - all but the first byte (the record length in 32 B chunks) zero, a few stray bits tolerated
+$wiped = substr(base64_decode($ret_val['dump']), 16);       // DEV-499 (D2): the record body must be wiped - zero, a few stray bits tolerated; DEV-523: from byte 16 on -
+                                                            // the first 16 B (length octet + 15 B ciphertext) are kept by the delete, programmed again they read back changed (L39)
+if ( substr($binbody2, 0, 32) !== substr($binbody, 0, 32) ) { echo "ERROR: the first 16 B of the record changed by the delete\n"; goto print_and_exit; }
 if ( substr_count($wiped, "\0") < intdiv(strlen($wiped) * 9, 10) ) { echo "ERROR: key material not wiped after delete\n"; goto print_and_exit; }
 // g) regenarete listing - should be one key less
 $keychain2 = array();

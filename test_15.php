@@ -1469,8 +1469,8 @@ if ($diag_mode == false) {
   goto TEST29;
 }
 $test_cfg['subtests'][28] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
-// a) DEV-521 (L25): a key delete cut by a power loss (DIAG tear_delete zeroes the first 1 / half / all but one 16 B words of a
-//    record, the length octet kept) - the key is gone at once (not listed). After a restart the record is a deleted record whose
+// a) DEV-521 (L25): a key delete cut by a power loss (DIAG tear_delete zeroes 1 / half / all but one of the 16 B words after word 0
+//    of a record - DEV-523: word 0 with the length octet kept, as the delete) - the key is gone at once (not listed). After a restart the record is a deleted record whose
 //    length is checked (no live record starts inside it): no salvage, the key storage is not rewritten - the length octet and the
 //    keys stored next to it are byte for byte the same, defrag/check reports no broken range. The rest of the ciphertext goes
 //    with the next reclaim of its slot (no in-place re-delete: a word programmed again reads through the ECC with errors, L39)
@@ -1533,10 +1533,10 @@ $torn_at = array();                                           // kid => array(ad
 foreach ($torn as $k => $kid) {
   if ( !isset($map[$kid]) ) { echo "    key $kid not listed\n"; goto print_and_exit; }
   list($addr, $len) = $map[$kid];
-  $words = array(1, intdiv($len, 32), intdiv($len, 16) - 1)[$k];
+  $words = array(1, intdiv($len, 32), intdiv($len, 16) - 2)[$k];   // DEV-523: words after word 0 (all but one: len/16 - 2)
   $ret_val = false; $not_used = false;
   $st = http_transaction("https", "GET", $cfg_domain, "/api/diag/tear_delete/$addr/$words", $ret_val, $not_used);
-  $cases[] = array("tear_delete $words of " . intdiv($len, 16) . " words", (($st == 200) && (($ret_val['status'] ?? 0) == 1)) ? 200 : (($st == 200) ? 0 : $st), 200);
+  $cases[] = array("tear_delete $words of " . (intdiv($len, 16) - 1) . " words after word 0", (($st == 200) && (($ret_val['status'] ?? 0) == 1)) ? 200 : (($st == 200) ? 0 : $st), 200);
   $torn_at[$kid] = array($addr, $len, $dump($addr, $len));
 }
 $map = $repo_map();
