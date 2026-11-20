@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 29;   //DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI publisher pinning; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check; 24 password change with the current password, wrap KEK label; 25 UI archive of a publisher not pinned not installed; 26 JSON token limit, request deadlines, upload scope; 27 FLS: disk lock, config, defrag (DIAG); DEV-521: 28 torn delete, 29 broken key chain - salvage at boot (DIAG)
+$test_subtest_cnt = 30;   //DEV-523: 30 a delete keeps word 0 (DIAG); DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI publisher pinning; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check; 24 password change with the current password, wrap KEK label; 25 UI archive of a publisher not pinned not installed; 26 JSON token limit, request deadlines, upload scope; 27 FLS: disk lock, config, defrag (DIAG); DEV-521: 28 torn delete, 29 broken key chain - salvage at boot (DIAG)
 
 // DEV-519 (H2): the current Encedo Manager release in the HEM format (webroot.tar signed by a pinned publisher)
 $ui_release_url = "https://api.encedo.com/download/dashboard/";
@@ -1576,7 +1576,7 @@ echo "  subtest-29\n";
 if ($diag_mode == false) {
   echo "    No DIAG mode, subtest will be skipped.\n";
   $test_cfg['subtests'][29] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
-  goto TEST14;
+  goto TEST30;
 }
 $test_cfg['subtests'][29] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) DEV-521 (variant B, PO decision 2026-11-20: no repair in the background): a broken key chain (DIAG chain_break zeroes the
@@ -1668,6 +1668,74 @@ if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // b) set result
 $test_cfg['subtests'][29] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 30       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST30:
+echo "  subtest-30\n";
+if ($diag_mode == false) {
+  echo "    No DIAG mode, subtest will be skipped.\n";
+  $test_cfg['subtests'][30] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
+  goto TEST14;
+}
+$test_cfg['subtests'][30] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-523 (L39): a key delete leaves word 0 of the record (length octet + 15 B ciphertext) as the record write programmed it -
+//    programmed again it read back changed through the flash ECC and broke the chain. After the delete: word 0 byte for byte the
+//    same, every 16 B word after it wiped (at most 8 one bits), the key not listed, its neighbour kept; after a restart word 0 still
+//    the same, the chain whole (no "keystore" in status, defrag/check no broken range), the neighbour usable
+$ones = function($s) { $b = 0; for ($i = 0; $i < strlen($s); $i++) $b += substr_count(decbin(ord($s[$i])), '1'); return $b; };
+$kids = array();
+foreach (array('del1' => "AES256", 'keep' => "SECP256R1", 'del2' => "SECP256R1") as $nm => $type) {
+  $ret_val = false;
+  $post_data = json_encode( array('label' => "T-15.30 $nm $run", 'type' => $type) );
+  if ( http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_gen) != 200 ) goto print_and_exit;
+  $kids[$nm] = $ret_val['kid'];
+}
+$map = $repo_map();
+if ($map === false) goto print_and_exit;
+$at = array();
+foreach ($kids as $nm => $kid) {
+  if ( !isset($map[$kid]) ) { echo "    key $nm not listed\n"; goto print_and_exit; }
+  $at[$nm] = array($map[$kid][0], $map[$kid][1], $dump($map[$kid][0], $map[$kid][1]));
+  if ($at[$nm][2] === false) { echo "    memdump of $nm failed\n"; goto print_and_exit; }
+}
+$cases = array();
+foreach (array('del1', 'del2') as $nm) {
+  $ret_val = false; $not_used = false;
+  $cases[] = array("delete '$nm'", http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/" . $kids[$nm], $ret_val, $not_used, $token_del), 200);
+  $raw = $dump($at[$nm][0], $at[$nm][1]);
+  $cases[] = array("'$nm': word 0 unchanged by the delete", (($raw !== false) && (substr($raw, 0, 16) === substr($at[$nm][2], 0, 16))) ? 1 : 0, 1);
+  $wiped = ($raw !== false);
+  for ($o = 16; $wiped && ($o < strlen($raw)); $o += 16) if ($ones(substr($raw, $o, 16)) > 8) $wiped = false;
+  $cases[] = array("'$nm': every word after word 0 wiped", $wiped ? 1 : 0, 1);
+}
+$map = $repo_map();
+$cases[] = array("deleted keys not listed", (($map !== false) && !isset($map[$kids['del1']]) && !isset($map[$kids['del2']])) ? 1 : 0, 1);
+$cases[] = array("neighbour key listed", (($map !== false) && isset($map[$kids['keep']])) ? 1 : 0, 1);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !$restart() ) goto print_and_exit;
+$uptime = 0;
+$map = $repo_map();
+if ($map === false) { echo "    keymgmt/list after the restart failed\n"; goto print_and_exit; }
+$cases = array();
+foreach (array('del1', 'del2') as $nm) {
+  $raw = $dump($at[$nm][0], $at[$nm][1]);
+  $cases[] = array("'$nm': word 0 unchanged after the restart", (($raw !== false) && (substr($raw, 0, 16) === substr($at[$nm][2], 0, 16))) ? 1 : 0, 1);
+}
+$cases[] = array("status: no \"keystore\" (chain whole)", isset($status()['keystore']) ? 0 : 1, 1);
+$cases[] = array("defrag/check: no broken range", $defrag_broken(), 0);
+$ret_val = false; $not_used = false;
+$cases[] = array("neighbour key usable", http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/" . $kids['keep'], $ret_val, $not_used, $token_gen), 200);
+$ret_val = false; $not_used = false;
+http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/" . $kids['keep'], $ret_val, $not_used, $token_del);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// b) set result
+$test_cfg['subtests'][30] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
