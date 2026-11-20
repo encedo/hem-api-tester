@@ -1579,10 +1579,13 @@ if ($diag_mode == false) {
   goto TEST14;
 }
 $test_cfg['subtests'][29] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
-// a) DEV-521: a broken key chain (DIAG chain_break zeroes the length octet of a key record in the middle of the storage) - the keys
-//    after it cannot be reached (keymgmt/list fails), defrag/check reports a broken range. The restart runs the salvage at boot:
-//    the broken range (that one key) is left out, every other key is kept with the same public key, the chain is whole again
-//    (defrag/check: no broken range), and keys can be created after it
+// a) DEV-521 (variant B, PO decision 2026-11-20: no repair in the background): a broken key chain (DIAG chain_break zeroes the
+//    length octet of a key record in the middle of the storage) - before a restart the keys after it cannot be reached (keymgmt/list
+//    fails), defrag/check reports a broken range. The restart finds the broken range and writes nothing: the key storage walks skip
+//    it - every other key is listed and usable with the same public key, a key can be created and deleted after it, status shows
+//    "keystore":"broken", defrag/check still one range. Only defrag/start (reclaim at the next boot) removes it: status without
+//    "keystore", no broken range, the other keys unchanged
+$status = function() use ($cfg_domain) { $r = false; http_transaction("http", "GET", $cfg_domain, "/api/system/status", $r); return is_array($r) ? $r : array(); };
 $names = array('before', 'broken', 'after1', 'after2');
 $kids = array();
 $pubs = array();
@@ -1604,25 +1607,60 @@ $st = http_transaction("https", "GET", $cfg_domain, "/api/diag/chain_break/" . $
 $cases[] = array("chain_break at the 'broken' key", (($st == 200) && (($ret_val['status'] ?? 0) == 1)) ? 200 : (($st == 200) ? 0 : $st), 200);
 $cases[] = array("keymgmt/list with a broken chain fails", ($repo_map() === false) ? 1 : 0, 1);
 $cases[] = array("defrag/check: one broken range", $defrag_broken(), 1);
+$broken_at = $map[$kids['broken']];
+$broken_raw = $dump($broken_at[0], $broken_at[1]);            // the broken range as chain_break left it
 if ( !check_cases($cases) ) goto print_and_exit;
 if ( !$restart() ) goto print_and_exit;
 $uptime = 0;
 $map = $repo_map();
-if ($map === false) { echo "    keymgmt/list after the salvage failed\n"; goto print_and_exit; }
+if ($map === false) { echo "    keymgmt/list after the restart failed\n"; goto print_and_exit; }
 $cases = array();
-$cases[] = array("keys listed after the salvage", count($map), $total0 - 1);
-$cases[] = array("the broken key is gone", isset($map[$kids['broken']]) ? 0 : 1, 1);
+$cases[] = array("status: \"keystore\":\"broken\"", (($status()['keystore'] ?? '') === 'broken') ? 1 : 0, 1);
+$cases[] = array("broken range unchanged after the restart (nothing written at boot)", (($broken_raw !== false) && ($dump($broken_at[0], $broken_at[1]) === $broken_raw)) ? 1 : 0, 1);
+$cases[] = array("keys listed after the restart", count($map), $total0 - 1);
+$cases[] = array("the broken key is not listed", isset($map[$kids['broken']]) ? 0 : 1, 1);
 foreach (array('before', 'after1', 'after2') as $nm) {
   $ret_val = false; $not_used = false;
   $st = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/" . $kids[$nm], $ret_val, $not_used, $token_gen);
-  $cases[] = array("key '$nm' kept, same public key", (($st == 200) && (($ret_val['pubkey'] ?? '') === $pubs[$nm])) ? 1 : 0, 1);
+  $cases[] = array("key '$nm' usable, same public key", (($st == 200) && (($ret_val['pubkey'] ?? '') === $pubs[$nm])) ? 1 : 0, 1);
 }
-$cases[] = array("defrag/check: no broken range after the salvage", $defrag_broken(), 0);
+$cases[] = array("defrag/check: still one broken range (no repair at boot)", $defrag_broken(), 1);
 $ret_val = false;
 $post_data = json_encode( array('label' => "T-15.29 new $run", 'type' => "SECP256R1") );
-$cases[] = array("create after the salvage", http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_gen), 200);
+$cases[] = array("create with a broken chain", http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_gen), 200);
 $new_kid = $ret_val['kid'] ?? '';
-foreach (array($kids['before'], $kids['after1'], $kids['after2'], $new_kid) as $kid) {
+$ret_val = false; $not_used = false;
+$cases[] = array("get the new key", http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/$new_kid", $ret_val, $not_used, $token_gen), 200);
+$map = $repo_map();
+$cases[] = array("the new key listed", (($map !== false) && isset($map[$new_kid])) ? 1 : 0, 1);
+$ret_val = false; $not_used = false;
+$cases[] = array("delete the new key", http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/$new_kid", $ret_val, $not_used, $token_del), 200);
+if ( !check_cases($cases) ) goto print_and_exit;
+// defrag/start: the reclaim at the next boot leaves the broken range out (the TOE restarts by itself ~2 s after the 202)
+$cases = array();
+$ret_val = false; $not_used = false;
+$cases[] = array("defrag/start with a broken chain", http_transaction("https", "GET", $cfg_domain, "/api/system/defrag/start", $ret_val, $not_used, $token_cfg), 202);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !helper_wait_reboot($cfg_domain, 180) ) { echo "    TOE not back after the defrag\n"; goto print_and_exit; }
+sleep(15);                                                    // HTTPS and the check-in a moment after status answers (as T-8)
+if ( helper_checkin($cfg_domain) == false ) { echo "    check-in after the defrag failed\n"; goto print_and_exit; }
+$token_gen = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:gen");
+$token_lst = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");
+$token_del = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:del");
+$token_cfg = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
+if ( ($token_gen == false) || ($token_lst == false) || ($token_del == false) || ($token_cfg == false) ) goto print_and_exit;
+$map = $repo_map();
+if ($map === false) { echo "    keymgmt/list after the defrag failed\n"; goto print_and_exit; }
+$cases = array();
+$cases[] = array("status after the defrag: no \"keystore\"", isset($status()['keystore']) ? 0 : 1, 1);
+$cases[] = array("defrag/check: no broken range after the defrag", $defrag_broken(), 0);
+$cases[] = array("keys listed after the defrag", count($map), $total0 - 1);
+foreach (array('before', 'after1', 'after2') as $nm) {
+  $ret_val = false; $not_used = false;
+  $st = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/" . $kids[$nm], $ret_val, $not_used, $token_gen);
+  $cases[] = array("key '$nm' kept by the defrag, same public key", (($st == 200) && (($ret_val['pubkey'] ?? '') === $pubs[$nm])) ? 1 : 0, 1);
+}
+foreach (array($kids['before'], $kids['after1'], $kids['after2']) as $kid) {
   $ret_val = false; $not_used = false;
   http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/$kid", $ret_val, $not_used, $token_del);
 }
