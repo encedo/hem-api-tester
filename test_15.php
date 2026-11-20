@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 27;   //DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI publisher pinning; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check; 24 password change with the current password, wrap KEK label; 25 UI archive of a publisher not pinned not installed; 26 JSON token limit, request deadlines, upload scope; 27 FLS: disk lock, config, defrag (DIAG)
+$test_subtest_cnt = 29;   //DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI publisher pinning; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check; 24 password change with the current password, wrap KEK label; 25 UI archive of a publisher not pinned not installed; 26 JSON token limit, request deadlines, upload scope; 27 FLS: disk lock, config, defrag (DIAG); DEV-521: 28 torn delete, 29 broken key chain - salvage at boot (DIAG)
 
 // DEV-519 (H2): the current Encedo Manager release in the HEM format (webroot.tar signed by a pinned publisher)
 $ui_release_url = "https://api.encedo.com/download/dashboard/";
@@ -1410,7 +1410,7 @@ echo "  subtest-27\n";
 if ($diag_mode == false) {
   echo "    No DIAG mode, subtest will be skipped.\n";
   $test_cfg['subtests'][27] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
-  goto TEST14;
+  goto TEST28;
 }
 $test_cfg['subtests'][27] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) DEV-519 in an FLS state (DIAG break_trng): M17 - an unlocked disk 1 is locked by the device, unlock 409, lock 200 (was 409);
@@ -1458,6 +1458,182 @@ $test_cfg['subtests'][27] = 'OK';                             // mark this subte
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+// Subtest: 28       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST28:
+echo "  subtest-28\n";
+if ($diag_mode == false) {
+  echo "    No DIAG mode, subtest will be skipped.\n";
+  $test_cfg['subtests'][28] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
+  goto TEST29;
+}
+$test_cfg['subtests'][28] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-521 (L25): a key delete cut by a power loss (DIAG tear_delete zeroes the first 1 / half / all but one 16 B words of a
+//    record, the length octet kept) - the key is gone at once (not listed). After a restart the record is a deleted record whose
+//    length is checked (no live record starts inside it): no salvage, the key storage is not rewritten - the length octet and the
+//    keys stored next to it are byte for byte the same, defrag/check reports no broken range. The rest of the ciphertext goes
+//    with the next reclaim of its slot (no in-place re-delete: a word programmed again reads through the ECC with errors, L39)
+$token_gen = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:gen");
+$token_lst = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");
+$token_del = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:del");
+$token_cfg = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");
+if ( ($token_gen == false) || ($token_lst == false) || ($token_del == false) || ($token_cfg == false) ) goto print_and_exit;
+$repo_map = function() use ($cfg_domain, &$token_lst) {       // kid => array(_addr, _len) of every listed key (all pages)
+  $map = array();
+  for ($off = 0; ; $off += 15) {
+    $ret_val = false; $not_used = false;
+    if ( http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/list/$off/15", $ret_val, $not_used, $token_lst) != 200 ) return false;
+    foreach ($ret_val['list'] as $item) $map[$item['kid']] = array($item['_addr'], $item['_len']);
+    if ( ($off + 15) >= intval($ret_val['total']) ) return $map;
+  }
+};
+$dump = function($addr, $len) use ($cfg_domain) {            // flash bytes of a record, or false
+  $ret_val = false; $not_used = false;
+  if ( http_transaction("https", "GET", $cfg_domain, "/api/diag/memdump/$addr/$len", $ret_val, $not_used) != 200 ) return false;
+  return base64_decode($ret_val['dump']);
+};
+$defrag_broken = function() use ($cfg_domain, &$token_cfg) {  // broken ranges reported by defrag/check, -1 on an error
+  $ret_val = false; $not_used = false;
+  if ( http_transaction("https", "GET", $cfg_domain, "/api/system/defrag/check", $ret_val, $not_used, $token_cfg) != 200 ) return -1;
+  return isset($ret_val['broken']) ? intval($ret_val['broken']) : -1;
+};
+$restart = function() use ($cfg_domain, $cfg_passpharse, &$token_lst, &$token_del, &$token_gen, &$token_cfg) {   // restart, new tokens
+  $ret_val = false; $not_used = false;
+  if ( http_transaction("http", "GET", $cfg_domain, "/api/system/reboot", $ret_val, $not_used, $token_cfg) != 200 ) return false;
+  if ( !helper_wait_reboot($cfg_domain, 120) ) { echo "    TOE not back after the restart\n"; return false; }
+  sleep(15);                                                  // HTTPS and the check-in a moment after status answers (as T-8)
+  if ( helper_checkin($cfg_domain) == false ) { echo "    check-in after the restart failed\n"; return false; }
+  $token_gen = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:gen");
+  $token_lst = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:list");
+  $token_del = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:del");
+  $token_cfg = helper_authorize($cfg_domain, $cfg_passpharse, "system:config");   // the restart ended the earlier tokens - 15.14 uses this one
+  return ($token_gen != false) && ($token_lst != false) && ($token_del != false) && ($token_cfg != false);
+};
+$run = bin2hex(random_bytes(3));
+$torn = array();                                              // kid of the torn keys
+$keep = array();                                              // kid of the neighbour keys
+for ($k = 0; $k < 3; $k++) {                                  // torn, neighbour, torn, neighbour, ... - each torn key has a neighbour after it
+  foreach (array('torn', 'keep') as $role) {
+    $ret_val = false;
+    $post_data = json_encode( array('label' => "T-15.28 $role $k $run", 'type' => "AES256") );
+    if ( http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_gen) != 200 ) goto print_and_exit;
+    if ($role == 'torn') $torn[] = $ret_val['kid']; else $keep[] = $ret_val['kid'];
+  }
+}
+$map = $repo_map();
+if ($map === false) goto print_and_exit;
+$keep_raw = array();
+foreach ($keep as $kid) {
+  if ( !isset($map[$kid]) ) { echo "    neighbour key $kid not listed\n"; goto print_and_exit; }
+  $keep_raw[$kid] = $dump($map[$kid][0], $map[$kid][1]);
+}
+$cases = array();
+$torn_at = array();                                           // kid => array(addr, len, raw after the tear)
+foreach ($torn as $k => $kid) {
+  if ( !isset($map[$kid]) ) { echo "    key $kid not listed\n"; goto print_and_exit; }
+  list($addr, $len) = $map[$kid];
+  $words = array(1, intdiv($len, 32), intdiv($len, 16) - 1)[$k];
+  $ret_val = false; $not_used = false;
+  $st = http_transaction("https", "GET", $cfg_domain, "/api/diag/tear_delete/$addr/$words", $ret_val, $not_used);
+  $cases[] = array("tear_delete $words of " . intdiv($len, 16) . " words", (($st == 200) && (($ret_val['status'] ?? 0) == 1)) ? 200 : (($st == 200) ? 0 : $st), 200);
+  $torn_at[$kid] = array($addr, $len, $dump($addr, $len));
+}
+$map = $repo_map();
+if ($map === false) goto print_and_exit;
+foreach ($torn as $kid) $cases[] = array("torn key $kid not listed", isset($map[$kid]) ? 0 : 1, 1);
+$cases[] = array("defrag/check: no broken range before the restart", $defrag_broken(), 0);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !$restart() ) goto print_and_exit;
+$uptime = 0;
+$map = $repo_map();
+if ($map === false) { echo "    keymgmt/list after the restart failed\n"; goto print_and_exit; }
+$cases = array();
+foreach ($torn_at as $kid => $t) {
+  $cases[] = array("torn record @ " . $t[0] . " unchanged after the restart (no salvage, no re-delete)", ($dump($t[0], $t[1]) === $t[2]) ? 1 : 0, 1);
+  $cases[] = array("torn key $kid not listed after the restart", isset($map[$kid]) ? 0 : 1, 1);
+}
+foreach ($keep as $kid) {
+  $cases[] = array("neighbour key $kid listed", isset($map[$kid]) ? 1 : 0, 1);
+  $cases[] = array("neighbour key $kid unchanged in flash", (isset($map[$kid]) && ($dump($map[$kid][0], $map[$kid][1]) === $keep_raw[$kid])) ? 1 : 0, 1);
+  $ret_val = false; $not_used = false;
+  http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/$kid", $ret_val, $not_used, $token_del);
+}
+$cases[] = array("defrag/check: no broken range after the restart", $defrag_broken(), 0);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// b) set result
+$test_cfg['subtests'][28] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 29       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST29:
+echo "  subtest-29\n";
+if ($diag_mode == false) {
+  echo "    No DIAG mode, subtest will be skipped.\n";
+  $test_cfg['subtests'][29] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
+  goto TEST14;
+}
+$test_cfg['subtests'][29] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-521: a broken key chain (DIAG chain_break zeroes the length octet of a key record in the middle of the storage) - the keys
+//    after it cannot be reached (keymgmt/list fails), defrag/check reports a broken range. The restart runs the salvage at boot:
+//    the broken range (that one key) is left out, every other key is kept with the same public key, the chain is whole again
+//    (defrag/check: no broken range), and keys can be created after it
+$names = array('before', 'broken', 'after1', 'after2');
+$kids = array();
+$pubs = array();
+foreach ($names as $nm) {
+  $ret_val = false;
+  $post_data = json_encode( array('label' => "T-15.29 $nm $run", 'type' => "SECP256R1") );
+  if ( http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_gen) != 200 ) goto print_and_exit;
+  $kids[$nm] = $ret_val['kid'];
+  $ret_val = false; $not_used = false;
+  if ( http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/" . $kids[$nm], $ret_val, $not_used, $token_gen) != 200 ) goto print_and_exit;
+  $pubs[$nm] = $ret_val['pubkey'] ?? '';
+}
+$map = $repo_map();
+if ( ($map === false) || !isset($map[$kids['broken']]) ) { echo "    keys not listed\n"; goto print_and_exit; }
+$total0 = count($map);
+$cases = array();
+$ret_val = false; $not_used = false;
+$st = http_transaction("https", "GET", $cfg_domain, "/api/diag/chain_break/" . $map[$kids['broken']][0], $ret_val, $not_used);
+$cases[] = array("chain_break at the 'broken' key", (($st == 200) && (($ret_val['status'] ?? 0) == 1)) ? 200 : (($st == 200) ? 0 : $st), 200);
+$cases[] = array("keymgmt/list with a broken chain fails", ($repo_map() === false) ? 1 : 0, 1);
+$cases[] = array("defrag/check: one broken range", $defrag_broken(), 1);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !$restart() ) goto print_and_exit;
+$uptime = 0;
+$map = $repo_map();
+if ($map === false) { echo "    keymgmt/list after the salvage failed\n"; goto print_and_exit; }
+$cases = array();
+$cases[] = array("keys listed after the salvage", count($map), $total0 - 1);
+$cases[] = array("the broken key is gone", isset($map[$kids['broken']]) ? 0 : 1, 1);
+foreach (array('before', 'after1', 'after2') as $nm) {
+  $ret_val = false; $not_used = false;
+  $st = http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/" . $kids[$nm], $ret_val, $not_used, $token_gen);
+  $cases[] = array("key '$nm' kept, same public key", (($st == 200) && (($ret_val['pubkey'] ?? '') === $pubs[$nm])) ? 1 : 0, 1);
+}
+$cases[] = array("defrag/check: no broken range after the salvage", $defrag_broken(), 0);
+$ret_val = false;
+$post_data = json_encode( array('label' => "T-15.29 new $run", 'type' => "SECP256R1") );
+$cases[] = array("create after the salvage", http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, $post_data, $token_gen), 200);
+$new_kid = $ret_val['kid'] ?? '';
+foreach (array($kids['before'], $kids['after1'], $kids['after2'], $new_kid) as $kid) {
+  $ret_val = false; $not_used = false;
+  http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/$kid", $ret_val, $not_used, $token_del);
+}
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// b) set result
+$test_cfg['subtests'][29] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
 
 /////////////////////////////////////////////////////////////////////
 // Subtest: 14       ////////////////////////////////////////////////
