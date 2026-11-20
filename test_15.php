@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 30;   //DEV-523: 30 a delete keeps word 0 (DIAG); DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI publisher pinning; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check; 24 password change with the current password, wrap KEK label; 25 UI archive of a publisher not pinned not installed; 26 JSON token limit, request deadlines, upload scope; 27 FLS: disk lock, config, defrag (DIAG); DEV-521: 28 torn delete, 29 broken key chain - salvage at boot (DIAG)
+$test_subtest_cnt = 31;   //DEV-524: 31 record CRC32 (record lengths, DIAG); DEV-523: 30 a delete keeps word 0 (DIAG); DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI publisher pinning; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check; 24 password change with the current password, wrap KEK label; 25 UI archive of a publisher not pinned not installed; 26 JSON token limit, request deadlines, upload scope; 27 FLS: disk lock, config, defrag (DIAG); DEV-521: 28 torn delete, 29 broken key chain - salvage at boot (DIAG)
 
 // DEV-519 (H2): the current Encedo Manager release in the HEM format (webroot.tar signed by a pinned publisher)
 $ui_release_url = "https://api.encedo.com/download/dashboard/";
@@ -1680,7 +1680,7 @@ echo "  subtest-30\n";
 if ($diag_mode == false) {
   echo "    No DIAG mode, subtest will be skipped.\n";
   $test_cfg['subtests'][30] = 'SKIPPED (no DIAG)';             // not a failure - the DIAG endpoints exist only in R&D builds
-  goto TEST14;
+  goto TEST31;
 }
 $test_cfg['subtests'][30] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) DEV-523 (L39): a key delete leaves word 0 of the record (length octet + 15 B ciphertext) as the record write programmed it -
@@ -1736,6 +1736,46 @@ if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // b) set result
 $test_cfg['subtests'][30] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 31       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST31:
+echo "  subtest-31\n";
+if ($diag_mode == false) {
+  echo "    No DIAG mode, subtest will be skipped.\n";
+  $test_cfg['subtests'][31] = 'SKIPPED (no DIAG)';             // not a failure - the record address / length (_addr, _len) of keymgmt/list
+  goto TEST14;
+}
+$test_cfg['subtests'][31] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-524: the record check is CRC32 (4 B, was CRC16). Record = length octet 1 + key material (24 + key) + descr (6 + label +
+//    descr) + CRC, rounded up to 32 B. AES256: 67 + label + descr B - a 61 B label fills 128 B exactly, a 62 B label needs 160 B
+//    (with CRC16 both were 128 B); SECP256R1 with label 24 B + descr 64 B: 192 B. Every key readable (the CRC checks out)
+$cases = array();
+$k31 = array();
+foreach (array(array("AES256", 61, 0, 128), array("AES256", 62, 0, 160), array("SECP256R1", 24, 64, 192)) as $i => $v) {
+  list($type, $ll, $dl, $want) = $v;
+  $label = substr("T-15.31 $i $run " . str_repeat("x", 64), 0, $ll);
+  $req = array('label' => $label, 'type' => $type);
+  if ($dl) $req['descr'] = base64_encode(str_repeat("d", $dl));
+  $ret_val = false;
+  if ( http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, json_encode($req), $token_gen) != 200 ) goto print_and_exit;
+  $k31[$i] = $ret_val['kid'];
+  $map = $repo_map();
+  $cases[] = array("$type label $ll B descr $dl B: record length", (($map !== false) && isset($map[$k31[$i]])) ? intval($map[$k31[$i]][1]) : -1, $want);
+  $ret_val = false; $not_used = false;
+  $cases[] = array("$type label $ll B: get (record check)", http_transaction("https", "GET", $cfg_domain, "/api/keymgmt/get/" . $k31[$i], $ret_val, $not_used, $token_gen), 200);
+}
+foreach ($k31 as $kid) {
+  $ret_val = false; $not_used = false;
+  http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/$kid", $ret_val, $not_used, $token_del);
+}
+if ( !check_cases($cases) ) goto print_and_exit;
+// b) set result
+$test_cfg['subtests'][31] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
