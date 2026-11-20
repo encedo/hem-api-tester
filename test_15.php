@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 31;   //DEV-524: 31 record CRC32 (record lengths, DIAG); DEV-523: 30 a delete keeps word 0 (DIAG); DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI publisher pinning; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check; 24 password change with the current password, wrap KEK label; 25 UI archive of a publisher not pinned not installed; 26 JSON token limit, request deadlines, upload scope; 27 FLS: disk lock, config, defrag (DIAG); DEV-521: 28 torn delete, 29 broken key chain - salvage at boot (DIAG)
+$test_subtest_cnt = 32;   //DEV-525: 32 key storage counters in the audit log (DIAG); DEV-524: 31 record CRC32 (record lengths, DIAG); DEV-523: 30 a delete keeps word 0 (DIAG); DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI publisher pinning; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check; 24 password change with the current password, wrap KEK label; 25 UI archive of a publisher not pinned not installed; 26 JSON token limit, request deadlines, upload scope; 27 FLS: disk lock, config, defrag (DIAG); DEV-521: 28 torn delete, 29 broken key chain - salvage at boot (DIAG)
 
 // DEV-519 (H2): the current Encedo Manager release in the HEM format (webroot.tar signed by a pinned publisher)
 $ui_release_url = "https://api.encedo.com/download/dashboard/";
@@ -1748,7 +1748,7 @@ echo "  subtest-31\n";
 if ($diag_mode == false) {
   echo "    No DIAG mode, subtest will be skipped.\n";
   $test_cfg['subtests'][31] = 'SKIPPED (no DIAG)';             // not a failure - the record address / length (_addr, _len) of keymgmt/list
-  goto TEST14;
+  goto TEST32;
 }
 $test_cfg['subtests'][31] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) DEV-524: the record check is CRC32 (4 B, was CRC16). Record = length octet 1 + key material (24 + key) + descr (6 + label +
@@ -1776,6 +1776,70 @@ foreach ($k31 as $kid) {
 if ( !check_cases($cases) ) goto print_and_exit;
 // b) set result
 $test_cfg['subtests'][31] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 32       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST32:
+echo "  subtest-32\n";
+if ($diag_mode == false) {
+  echo "    No DIAG mode, subtest will be skipped.\n";
+  $test_cfg['subtests'][32] = 'SKIPPED (no DIAG)';             // not a failure - the record length (_len) of keymgmt/list
+  goto TEST14;
+}
+$test_cfg['subtests'][32] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-525: the key change audit entries carry the key storage counters after the operation - KID || records || used (32 B
+//    chunks), uint32 LE: create A, create B - B's entry has one record more and B's record length more used; delete B - one
+//    record less, used the same. The self-test KEY_INTEGRITY_ERROR entry carries 6 values (24 B), no broken range. The entries
+//    are read from the closed log after a restart (the current file is not listed)
+$names32 = array('A', 'B');
+$k32 = array();
+foreach ($names32 as $nm) {
+  $ret_val = false;
+  if ( http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/create", $ret_val, json_encode(array('label' => "T-15.32 $nm $run", 'type' => "AES256")), $token_gen) != 200 ) goto print_and_exit;
+  $k32[$nm] = $ret_val['kid'];
+}
+$map = $repo_map();
+if ( ($map === false) || !isset($map[$k32['B']]) ) { echo "    key B not listed\n"; goto print_and_exit; }
+$len_b = intval($map[$k32['B']][1]);
+$ret_val = false; $not_used = false;
+if ( http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/" . $k32['B'], $ret_val, $not_used, $token_del) != 200 ) goto print_and_exit;
+if ( !$restart() ) goto print_and_exit;
+$uptime = 0;
+$token_log = helper_authorize($cfg_domain, $cfg_passpharse, "logger:get");
+if ($token_log == false) goto print_and_exit;
+$ret_val = false; $not_used = false;
+if ( http_transaction("https", "GET", $cfg_domain, "/api/logger/list/0", $ret_val, $not_used, $token_log) != 200 ) goto print_and_exit;
+$newest = $ret_val['newest'] ?? '';
+$ret_val = false; $not_used = false;
+if ( http_transaction("https", "GET", $cfg_domain, "/api/logger/$newest", $ret_val, $not_used, $token_log) != 200 ) goto print_and_exit;
+$ev = array();                                                // "<type>:<kid hex>" => data, "18" => data of the last self-test entry
+foreach (preg_split("/\r?\n/", (string)$ret_val) as $line) {
+  $f = explode("|", $line);
+  if (count($f) != 7) continue;
+  $data = base64_decode(strtr($f[5], '-_', '+/'));
+  if ( in_array($f[2], array("14", "15")) && (strlen($data) >= 16) ) $ev[$f[2] . ":" . bin2hex(substr($data, 0, 16))] = $data;
+  if ($f[2] == "18") $ev["18"] = $data;
+}
+$u = function($d, $i) { return (strlen($d) >= $i + 4) ? unpack('V', substr($d, $i, 4))[1] : -1; };
+$ga = $ev["14:" . strtolower($k32['A'])] ?? ''; $gb = $ev["14:" . strtolower($k32['B'])] ?? ''; $db = $ev["15:" . strtolower($k32['B'])] ?? '';
+$cases = array();
+$cases[] = array("KEY_GENERATION A / B, KEY_DELETE B entries with counters (24 B)", ((strlen($ga) == 24) && (strlen($gb) == 24) && (strlen($db) == 24)) ? 1 : 0, 1);
+$cases[] = array("create B: one record more than after A", $u($gb, 16) - $u($ga, 16), 1);
+$cases[] = array("create B: used grew by B's record length (chunks)", $u($gb, 20) - $u($ga, 20), intdiv($len_b, 32));
+$cases[] = array("delete B: one record less", $u($gb, 16) - $u($db, 16), 1);
+$cases[] = array("delete B: used the same", $u($db, 20) - $u($gb, 20), 0);
+$cases[] = array("KEY_INTEGRITY_ERROR (self-test) data: 6 values", strlen($ev["18"] ?? ''), 24);
+$cases[] = array("KEY_INTEGRITY_ERROR: no broken range", $u($ev["18"] ?? '', 16), 0);
+$ret_val = false; $not_used = false;
+http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/" . $k32['A'], $ret_val, $not_used, $token_del);
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// b) set result
+$test_cfg['subtests'][32] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
