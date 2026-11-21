@@ -1793,7 +1793,8 @@ if ($diag_mode == false) {
 $test_cfg['subtests'][32] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) DEV-525: the key change audit entries carry the key storage counters after the operation - KID || records || used (32 B
 //    chunks), uint32 LE: create A, create B - B's entry has one record more and B's record length more used; delete B - one
-//    record less, used the same. The self-test KEY_INTEGRITY_ERROR entry carries 6 values (24 B), no broken range. The entries
+//    record less, used the same; update A (label) - KEY_ATTRIBUTES_CHANGED: records the same, used + A's record length (the new
+//    record at the end, the old one deleted). The self-test KEY_INTEGRITY_ERROR entry carries 6 values (24 B), no broken range. The entries
 //    are read from the closed log after a restart (the current file is not listed)
 $names32 = array('A', 'B');
 $k32 = array();
@@ -1805,8 +1806,13 @@ foreach ($names32 as $nm) {
 $map = $repo_map();
 if ( ($map === false) || !isset($map[$k32['B']]) ) { echo "    key B not listed\n"; goto print_and_exit; }
 $len_b = intval($map[$k32['B']][1]);
+$len_a = intval($map[$k32['A']][1]);
 $ret_val = false; $not_used = false;
 if ( http_transaction("https", "DELETE", $cfg_domain, "/api/keymgmt/delete/" . $k32['B'], $ret_val, $not_used, $token_del) != 200 ) goto print_and_exit;
+$ret_val = false;
+$token_upd = helper_authorize($cfg_domain, $cfg_passpharse, "keymgmt:upd");
+if ( ($token_upd == false) || (http_transaction("https", "POST", $cfg_domain, "/api/keymgmt/update", $ret_val, json_encode(array('kid' => $k32['A'], 'label' => "T-15.32 A2 $run")), $token_upd) != 200) ) { echo "    update of key A failed
+"; goto print_and_exit; }
 if ( !$restart() ) goto print_and_exit;
 $uptime = 0;
 $token_log = helper_authorize($cfg_domain, $cfg_passpharse, "logger:get");
@@ -1821,7 +1827,7 @@ foreach (preg_split("/\r?\n/", (string)$ret_val) as $line) {
   $f = explode("|", $line);
   if (count($f) != 7) continue;
   $data = base64_decode(strtr($f[5], '-_', '+/'));
-  if ( in_array($f[2], array("14", "15")) && (strlen($data) >= 16) ) $ev[$f[2] . ":" . bin2hex(substr($data, 0, 16))] = $data;
+  if ( in_array($f[2], array("14", "15", "19")) && (strlen($data) >= 16) ) $ev[$f[2] . ":" . bin2hex(substr($data, 0, 16))] = $data;
   if ($f[2] == "18") $ev["18"] = $data;
 }
 $u = function($d, $i) { return (strlen($d) >= $i + 4) ? unpack('V', substr($d, $i, 4))[1] : -1; };
@@ -1832,6 +1838,10 @@ $cases[] = array("create B: one record more than after A", $u($gb, 16) - $u($ga,
 $cases[] = array("create B: used grew by B's record length (chunks)", $u($gb, 20) - $u($ga, 20), intdiv($len_b, 32));
 $cases[] = array("delete B: one record less", $u($gb, 16) - $u($db, 16), 1);
 $cases[] = array("delete B: used the same", $u($db, 20) - $u($gb, 20), 0);
+$ua = $ev["19:" . strtolower($k32['A'])] ?? '';
+$cases[] = array("update A: KEY_ATTRIBUTES_CHANGED with counters (24 B)", strlen($ua), 24);
+$cases[] = array("update A: records the same (new record + old deleted)", $u($ua, 16) - $u($db, 16), 0);
+$cases[] = array("update A: used grew by A's record length", $u($ua, 20) - $u($db, 20), intdiv($len_a, 32));
 $cases[] = array("KEY_INTEGRITY_ERROR (self-test) data: 6 values", strlen($ev["18"] ?? ''), 24);
 $cases[] = array("KEY_INTEGRITY_ERROR: no broken range", $u($ev["18"] ?? '', 16), 0);
 $ret_val = false; $not_used = false;
