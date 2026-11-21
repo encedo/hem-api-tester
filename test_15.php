@@ -1046,7 +1046,7 @@ $made[] = $kid_pair;
 // (the update of the pairing record runs last, in d): before the fix it went through and, without descr, removed the pairing)
 // b) DEV-519 (M5): token lifetime - no exp: 5 min (was 60 s); a later exp is cut to 12 h (auth/token took it unchanged, ext/token
 //    took the authenticator's); ext/token: the scope of the reply must pass the auth/token scope rules (was taken as it came)
-$tok_exp = function($claims_mod) use ($cfg_domain, $cfg_passpharse) {   // auth/token as helper_authorize, claims changed; the token's exp - iat, or false
+$tok_exp = function($claims_mod) use ($cfg_domain, $cfg_passpharse) {   // auth/token as helper_authorize, claims changed; [exp - request iat, exp - token iat], or false
   $ret_val = false;
   if ( http_transaction("http", "GET", $cfg_domain, "/api/auth/token", $ret_val) != 200 ) return false;
   $secret = hash_pbkdf2("sha256", $cfg_passpharse, $ret_val['eid'], 600000, 32, true);
@@ -1057,12 +1057,12 @@ $tok_exp = function($claims_mod) use ($cfg_domain, $cfg_passpharse) {   // auth/
   $ret_val = false;
   if ( http_transaction("http", "POST", $cfg_domain, "/api/auth/token", $ret_val, $post_data) != 200 ) return false;
   $p = extauth_payload($ret_val['token']);
-  return $p['exp'] - $p['iat'];
+  return array($p['exp'] - $iat, $p['exp'] - $p['iat']);   // [0] vs the request iat (the no-exp default base), [1] vs the token iat (the 12 h cap base)
 };
 $d = $tok_exp(function($c) { unset($c['exp']); return $c; });
-if ( ($d === false) || ($d < 290) || ($d > 310) ) { echo "    auth/token without exp: lifetime " . var_export($d, true) . " s, expected 300\n"; $cases[] = array("auth/token lifetime without exp", 0, 200); }
+if ( ($d === false) || ($d[0] != 300) ) { echo "    auth/token without exp: exp - request iat " . var_export($d === false ? false : $d[0], true) . " s, expected 300\n"; $cases[] = array("auth/token lifetime without exp", 0, 200); }
 $d = $tok_exp(function($c) { $c['exp'] = time() + 2 * 86400; return $c; });
-if ( ($d === false) || ($d > 12 * 3600 + 10) ) { echo "    auth/token exp +2 days: lifetime " . var_export($d, true) . " s, expected <= 12 h\n"; $cases[] = array("auth/token lifetime cap", 0, 200); }
+if ( ($d === false) || ($d[1] > 12 * 3600 + 10) ) { echo "    auth/token exp +2 days: lifetime " . var_export($d === false ? false : $d[1], true) . " s, expected <= 12 h\n"; $cases[] = array("auth/token lifetime cap", 0, 200); }
 $authreq = false;
 if ( extauth_request_direct($cfg_domain, "keymgmt:list", $authreq) != 200 ) goto print_and_exit;
 $t = false;
