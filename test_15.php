@@ -8,7 +8,7 @@ include "config.php";
 // test name, descr & number of subtests
 $test_name = "T-15";
 $test_descr = "Input validation and robustness";   // malformed input is rejected, the device keeps running (DEV-438)
-$test_subtest_cnt = 32;   //DEV-525: 32 key storage counters in the audit log (DIAG); DEV-524: 31 record CRC32 (record lengths, DIAG); DEV-523: 30 a delete keeps word 0 (DIAG); DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI publisher pinning; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check; 24 password change with the current password, wrap KEK label; 25 UI archive of a publisher not pinned not installed; 26 JSON token limit, request deadlines, upload scope; 27 FLS: disk lock, config, defrag (DIAG); DEV-521: 28 torn delete, 29 broken key chain - salvage at boot (DIAG)
+$test_subtest_cnt = 33;   //DEV-526: 33 configuration copy restore (DIAG); DEV-525: 32 key storage counters in the audit log (DIAG); DEV-524: 31 record CRC32 (record lengths, DIAG); DEV-523: 30 a delete keeps word 0 (DIAG); DEV-436: 15-17 multi-scope tokens (run before 14, the factory wipe); DEV-502: 18 Host-less status + nonce replay; DEV-519: 19 JWT segments, folded header, Origin length; 20 web UI publisher pinning; 21 pairing descr, token lifetime, nonce order; 22 AES key size, upload close; 23 X25519 public key check; 24 password change with the current password, wrap KEK label; 25 UI archive of a publisher not pinned not installed; 26 JSON token limit, request deadlines, upload scope; 27 FLS: disk lock, config, defrag (DIAG); DEV-521: 28 torn delete, 29 broken key chain - salvage at boot (DIAG)
 
 // DEV-519 (H2): the current Encedo Manager release in the HEM format (webroot.tar signed by a pinned publisher)
 $ui_release_url = "https://api.encedo.com/download/dashboard/";
@@ -1788,7 +1788,7 @@ echo "  subtest-32\n";
 if ($diag_mode == false) {
   echo "    No DIAG mode, subtest will be skipped.\n";
   $test_cfg['subtests'][32] = 'SKIPPED (no DIAG)';             // not a failure - the record length (_len) of keymgmt/list
-  goto TEST14;
+  goto TEST33;
 }
 $test_cfg['subtests'][32] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
 // a) DEV-525: the key change audit entries carry the key storage counters after the operation - KID || records || used (32 B
@@ -1850,6 +1850,78 @@ if ( !check_cases($cases) ) goto print_and_exit;
 if ( !check_alive($uptime) ) goto print_and_exit;
 // b) set result
 $test_cfg['subtests'][32] = 'OK';                             // mark this subtest as OK
+/////////////////////////////////////////////////////////////////////
+// end of subtest    ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////
+// Subtest: 33       ////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+TEST33:
+echo "  subtest-33\n";
+if ($diag_mode == false) {
+  echo "    No DIAG mode, subtest will be skipped.\n";
+  $test_cfg['subtests'][33] = 'SKIPPED (no DIAG)';             // not a failure - cfg_tear is a DIAG test aid
+  goto TEST14;
+}
+$test_cfg['subtests'][33] = 'ERROR';                          // mark this subtest default as ERROR - initialization as subtest is ongoing
+// a) DEV-526 (M12): a configuration save cut by a power loss. Every save writes a 1:1 copy of the configuration into the last 16
+//    pages of RESERVED first, then erases and writes the user signature. DIAG cfg_tear/0 erases the user signature, cfg_tear/1
+//    erases it and writes only its first half; after a restart the TOE is still initialised, with the user name of the last save,
+//    and the boot logged CONFIG_RESTORED (0x39) OK, data iat || uts of the copy. The third round makes 17 saves first - the copy
+//    block (16 pages) wraps (16-page erase), the restore takes the newest copy. cfg_tear/2 (no copy - the defaults) is left out:
+//    the TOE would need T-2 before T-14
+$cfg_user = function() use ($cfg_domain, &$token_cfg) {      // user name in the configuration, false on an error
+  $ret_val = false; $not_used = false;
+  if ( http_transaction("https", "GET", $cfg_domain, "/api/system/config", $ret_val, $not_used, $token_cfg) != 200 ) return false;
+  return $ret_val['user'] ?? false;
+};
+$cfg_save = function($name) use ($cfg_domain, &$token_cfg) { // POST /api/system/config user=<name>, HTTP status
+  $ret_val = false;
+  return http_transaction("https", "POST", $cfg_domain, "/api/system/config", $ret_val, json_encode(array('user' => $name)), $token_cfg);
+};
+$user0 = $cfg_user();
+if ($user0 === false) { echo "    GET config failed\n"; goto print_and_exit; }
+$t33 = time() - 60;                                           // copies saved from now on (TOE clock offset tolerated)
+$cases = array();
+foreach (array(array(0, 1), array(1, 1), array(1, 17)) as $i => $round) {   // (cfg_tear mode, saves before it)
+  for ($s = 0; $s < $round[1]; $s++) {
+    $nm = "T-15.33 $i.$s $run";
+    if ( $cfg_save($nm) != 200 ) { echo "    config save '$nm' failed\n"; goto print_and_exit; }
+  }
+  $ret_val = false; $not_used = false;
+  $st = http_transaction("https", "GET", $cfg_domain, "/api/diag/cfg_tear/" . $round[0], $ret_val, $not_used);
+  $cases[] = array("cfg_tear/" . $round[0] . " (round $i)", (($st == 200) && (($ret_val['status'] ?? 0) == 1)) ? 200 : (($st == 200) ? 0 : $st), 200);
+  if ( !$restart() ) goto print_and_exit;
+  $ret_val = false;
+  http_transaction("http", "GET", $cfg_domain, "/api/system/status", $ret_val);
+  $cases[] = array("round $i: initialised after the restart", isset($ret_val['inited']) ? 0 : 1, 1);
+  $cases[] = array("round $i: configuration of the last save", ($cfg_user() === $nm) ? 1 : 0, 1);
+}
+if ( !$restart() ) goto print_and_exit;                       // the entry of the last restore is in a closed log now
+$uptime = 0;
+$token_log = helper_authorize($cfg_domain, $cfg_passpharse, "logger:get");
+if ($token_log == false) goto print_and_exit;
+$ret_val = false; $not_used = false;
+if ( http_transaction("https", "GET", $cfg_domain, "/api/logger/list/0", $ret_val, $not_used, $token_log) != 200 ) goto print_and_exit;
+$restored = 0;
+foreach (($ret_val['id'] ?? array()) as $id) {
+  $log = false; $not_used = false;
+  if ( http_transaction("https", "GET", $cfg_domain, "/api/logger/$id", $log, $not_used, $token_log) != 200 ) continue;
+  foreach (preg_split("/\r?\n/", (string)$log) as $line) {
+    $f = explode("|", $line);
+    if ( (count($f) != 7) || ($f[2] != "39") ) continue;
+    $data = base64_decode(strtr($f[5], '-_', '+/'));
+    if ( ($f[3] == "0") && (strlen($data) == 8) && (unpack('V', substr($data, 4, 4))[1] >= $t33) ) $restored++;
+  }
+}
+$cases[] = array("CONFIG_RESTORED OK entries (uts of a copy saved in this subtest)", $restored, 3);
+if ( $cfg_save($user0) != 200 ) { echo "    the user name not set back\n"; goto print_and_exit; }
+if ( !check_cases($cases) ) goto print_and_exit;
+if ( !check_alive($uptime) ) goto print_and_exit;
+// b) set result
+$test_cfg['subtests'][33] = 'OK';                             // mark this subtest as OK
 /////////////////////////////////////////////////////////////////////
 // end of subtest    ////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////
